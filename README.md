@@ -1,6 +1,6 @@
 # Vittavani
 
-Vittavani is a voice-first business-assistant foundation for Indian small businesses, a product of Vinayaka Services. The current implementation provides a FastAPI inventory data foundation, deterministic multilingual read-only product lookup, and a small Next.js text-query interface. It is not yet a production-ready SaaS; see [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) before deployment.
+Vittavani is a voice-first business-assistant foundation for Indian small businesses, a product of Vinayaka Services. The current implementation provides a FastAPI inventory foundation, deterministic multilingual product lookup, a database-derived inventory dashboard, and browser voice controls with typed fallback. It is not yet a production-ready SaaS; see [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) before deployment.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 4. Apply migrations: `alembic upgrade head` from `backend/`.
 5. Create the optional sample data explicitly: `python -m app.seed_demo` from `backend/`. This command refuses non-development mode or an already existing configured business.
 6. Start the API: `uvicorn app.main:app --reload` from `backend/`.
-7. Configure the web app's local API token in the frontend environment. For local-only testing create `frontend/.env.local` with `NEXT_PUBLIC_API_URL=http://localhost:8000` and `NEXT_PUBLIC_DEV_API_TOKEN` set to the same value as `DEV_API_TOKEN`. This exposes a development-only token in the browser and must never be used for production.
+7. Configure the web app's local API token in the frontend environment. For local-only testing create `frontend/.env.local` with `NEXT_PUBLIC_API_URL=http://localhost:8000` and `NEXT_PUBLIC_DEV_API_TOKEN` set to the same value as `DEV_API_TOKEN`. `.env.local` is ignored by Git. The development-only token is sent from the browser only in Next.js development mode; never configure it in a production build.
 8. Install and start the frontend: `npm install && npm run dev` from `frontend/`.
 9. Open `http://localhost:3000`. Health check: `http://localhost:8000/health`.
 

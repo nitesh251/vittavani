@@ -10,7 +10,7 @@ Vittavani uses a small modular monolith: a Next.js/TypeScript web client calls a
 - `backend/app/models.py`: business-scoped catalogue and inventory persistence models.
 - `backend/app/query_understanding.py`: pure deterministic multilingual intent and entity matching.
 - `backend/app/query_service.py`: database-backed product lookup and answer construction.
-- `backend/app/main.py`: development-token-scoped product/location creation and transactional stock receipt/transfer routes.
+- `backend/app/main.py`: development-token-scoped dashboard aggregates, product/location creation, and transactional stock receipt/transfer routes.
 - `backend/alembic/`: versioned database schema changes.
 
 Every business-owned model carries a `business_id`; foreign keys and compound uniqueness constraints keep associations within a business. Database lookups must always include the authorized business scope. The initial development-token seam is not production authentication; protected development API routes are disabled outside development mode.
@@ -23,7 +23,7 @@ The initial write routes support product/location creation, confirmed stock rece
 
 ## Frontend
 
-The Next.js app provides a small responsive Ask Vittavani interface. Text is the supported input path; speech recognition, authentication, onboarding, and the rest of the operating areas are not yet implemented.
+The Next.js home page combines database-derived catalogue/stock totals, grouped by configured unit without converting unlike quantities, low-stock/out-of-stock alerts, location rollups, recent stock movements, and the existing Ask Vittavani query flow. Browser speech recognition uses Hindi/Indian English modes when supported, with editable transcripts and a typed fallback; optional answer speech uses the browser speech synthesizer. Sales/customer balances are omitted because those records and APIs do not exist yet.
 
 ## Deployment and security
 

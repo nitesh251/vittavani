@@ -100,6 +100,8 @@ def client(session, monkeypatch):
     ("text", "intent"),
     [
         ("Where is Amul Butter?", "product_location"),
+        ("Where can I find Amul Butter?", "product_location"),
+        ("Where is Amul Buter?", "product_location"),
         ("Amul butter kahan rakha hai?", "product_location"),
         ("अमूल बटर कहाँ रखा है?", "product_location"),
         ("वेयर इज़ अमूल बटर?", "product_location"),
@@ -194,6 +196,117 @@ def test_http_lookup_requires_configured_development_token(client):
     assert response.status_code == 200
     assert response.json()["product_name"] == "Amul Butter"
     assert response.json()["original_query"] == "Where is Amul Butter?"
+
+
+def test_dashboard_reports_real_tenant_inventory_aggregates(client):
+    assert client.get("/api/v1/dashboard").status_code == 401
+    response = client.get("/api/v1/dashboard", headers={"X-Dev-Token": "local-test-token"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["product_count"] == 1
+    assert data["total_stock_units"] == "23.000"
+    assert data["stock_by_unit"] == [{"unit": "packet", "quantity": "23.000"}]
+    assert data["low_stock_count"] == 0
+    assert data["out_of_stock_count"] == 0
+    assert {location["name"]: location["stock_by_unit"] for location in data["stock_by_location"]} == {
+        "Storeroom": [{"unit": "packet", "quantity": "3.000"}],
+        "Storeroom > Rack B > Shelf 2": [{"unit": "packet", "quantity": "20.000"}],
+    }
+    assert data["recent_stock_activity"] == []
+    assert "today_sales" not in data
+    assert "customer_credit" not in data
+
+
+def test_dashboard_reports_low_stock_and_recent_activity(client, session):
+    milk = Product(
+        id=UUID("00000000-0000-0000-0000-000000000070"),
+        business_id=BUSINESS_ID,
+        name="Milk",
+        unit="packet",
+        minimum_stock=Decimal("5"),
+    )
+    session.add(milk)
+    session.flush()
+    session.add_all(
+        [
+            InventoryBalance(
+                business_id=BUSINESS_ID,
+                product_id=milk.id,
+                location_id=UUID("00000000-0000-0000-0000-000000000010"),
+                quantity=Decimal("2"),
+            ),
+            StockMovement(
+                business_id=BUSINESS_ID,
+                product_id=milk.id,
+                destination_location_id=UUID("00000000-0000-0000-0000-000000000010"),
+                movement_type="purchase_receipt",
+                quantity_change=Decimal("2"),
+                initiated_by="test",
+            ),
+        ]
+    )
+    session.commit()
+
+    response = client.get("/api/v1/dashboard", headers={"X-Dev-Token": "local-test-token"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["low_stock_count"] == 1
+    assert data["low_stock_products"][0]["name"] == "Milk"
+    assert data["low_stock_products"][0]["quantity"] == "2.000"
+    assert data["recent_stock_activity"][0]["product_name"] == "Milk"
+
+
+def test_dashboard_returns_zero_counts_for_empty_business(client, session, monkeypatch):
+    empty_business_id = UUID("00000000-0000-0000-0000-000000000099")
+    session.add(Business(id=empty_business_id, name="Empty Shop"))
+    session.commit()
+    monkeypatch.setattr("app.main.settings.dev_business_id", str(empty_business_id))
+
+    response = client.get("/api/v1/dashboard", headers={"X-Dev-Token": "local-test-token"})
+
+    assert response.status_code == 200
+    assert response.json()["product_count"] == 0
+    assert response.json()["total_stock_units"] == "0"
+    assert response.json()["low_stock_products"] == []
+    assert response.json()["stock_by_unit"] == []
+    assert response.json()["stock_by_location"] == []
+    assert response.json()["recent_stock_activity"] == []
+
+
+def test_dashboard_keeps_different_units_separate(client, session):
+    rice = Product(
+        id=UUID("00000000-0000-0000-0000-000000000071"),
+        business_id=BUSINESS_ID,
+        name="Rice",
+        unit="bag",
+    )
+    session.add(rice)
+    session.flush()
+    session.add(
+        InventoryBalance(
+            business_id=BUSINESS_ID,
+            product_id=rice.id,
+            location_id=UUID("00000000-0000-0000-0000-000000000010"),
+            quantity=Decimal("4"),
+        )
+    )
+    session.commit()
+
+    response = client.get("/api/v1/dashboard", headers={"X-Dev-Token": "local-test-token"})
+    data = response.json()
+
+    assert data["stock_by_unit"] == [
+        {"unit": "bag", "quantity": "4.000"},
+        {"unit": "packet", "quantity": "23.000"},
+    ]
+    assert data["total_stock_units"] is None
+    storeroom = next(item for item in data["stock_by_location"] if item["name"] == "Storeroom")
+    assert storeroom["stock_by_unit"] == [
+        {"unit": "bag", "quantity": "4.000"},
+        {"unit": "packet", "quantity": "3.000"},
+    ]
 
 
 def test_request_cannot_select_another_business(client):

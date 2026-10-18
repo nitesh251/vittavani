@@ -11,7 +11,10 @@ Status reflects code in this repository; “implemented” does not imply produc
 - **Inventory API foundation:** development-only product/location creation, positive-quantity receipts, and atomic stock transfers with source row locking, per-location balances, and append-only movement records are implemented.
 - **Lookup regression tests:** equivalent supported English, Hinglish, and Devanagari alias queries; ambiguity, unknown product, missing location, multi-location stock, and empty input are covered.
 - **Inventory regression tests:** product/location creation, stock receipt, balanced transfer movements, insufficient-stock rollback, and caller-supplied tenant rejection are covered.
-- **Development UI:** responsive text-query page and explicit development-only seeded data command are included.
+- **Dashboard:** tenant-scoped aggregates, low/out-of-stock counts, per-unit and per-location stock (without converting unlike units), low-stock alerts, and recent stock movement data are served from inventory records; unsupported sales and customer-credit metrics are omitted.
+- **Development UI:** responsive dashboard and existing text-query flow; browser speech recognition has language choices, transcript editing, listening/error/unsupported handling, and typed fallback. Optional answer speech includes a saved preference, unsupported-browser explanation, and stop control.
+- **Dashboard tests:** tenant-scoped inventory totals, mixed-unit grouping without combining incompatible quantities, low-stock alerts, recent movements, empty-business result, and omission of unsupported sales/credit metrics are covered.
+- **Browser smoke checks:** headless Chromium verified dashboard real-data/error/empty states, Hindi/Hinglish lookup, editable mock-recognition transcript, unsupported/denied/empty recognition fallbacks, and optional spoken-answer controls. Real microphone hardware and speech-engine accuracy are not verified.
 
 ## Partially implemented
 
@@ -25,8 +28,9 @@ Status reflects code in this repository; “implemented” does not imply produc
 - Supabase or equivalent authentication, per-user membership/roles, production bearer-token validation, CSRF/rate limiting, and cross-business API security tests.
 - Stock adjustment, damage/expiry, returns, low-stock alert lifecycle, inventory UI, and concurrency verification against PostgreSQL.
 - Sales, idempotency, payments, customer credit ledger, suppliers, and purchases.
-- Dashboard metrics, onboarding, full navigation/operational areas, reports, pagination, and exports.
-- Browser speech recognition, transcript editing/confirmation, optional LLM adapter, and command audit/retention controls.
+- Real microphone hardware, actual browser permission dialogs, and Hindi/Hinglish recognition accuracy across devices have not been verified.
+- Onboarding, full inventory management UI, sales, customer udhaar, reports, pagination, and exports.
+- Optional LLM adapter, mutation confirmations, and command audit/retention controls.
 - Private file storage, upload validation, data export/deletion workflows, backup/restore verification, CI, and end-to-end browser tests.
 - Production frontend build/deployment and hosting-specific hardening.
 

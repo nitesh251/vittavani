@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -85,6 +85,46 @@ class StockResult(BaseModel):
     message: str
 
 
+class DashboardProduct(BaseModel):
+    id: UUID
+    name: str
+    quantity: str
+    unit: str
+    minimum_stock: str
+
+
+class DashboardUnitTotal(BaseModel):
+    unit: str
+    quantity: str
+
+
+class DashboardLocation(BaseModel):
+    name: str
+    product_count: int
+    stock_by_unit: list[DashboardUnitTotal]
+
+
+class DashboardActivity(BaseModel):
+    movement_type: str
+    product_name: str
+    quantity: str
+    unit: str
+    source_location: str | None
+    destination_location: str | None
+    created_at: str
+
+
+class DashboardResponse(BaseModel):
+    product_count: int
+    total_stock_units: str | None
+    stock_by_unit: list[DashboardUnitTotal]
+    low_stock_count: int
+    out_of_stock_count: int
+    low_stock_products: list[DashboardProduct]
+    stock_by_location: list[DashboardLocation]
+    recent_stock_activity: list[DashboardActivity]
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -119,6 +159,159 @@ def ask(
         clarification_required=result.clarification_required,
         message=result.message,
     )
+
+
+@app.get("/api/v1/dashboard", response_model=DashboardResponse)
+def dashboard(
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> DashboardResponse:
+    totals = (
+        select(
+            InventoryBalance.product_id.label("product_id"),
+            func.sum(InventoryBalance.quantity).label("quantity"),
+        )
+        .where(InventoryBalance.business_id == business_id)
+        .group_by(InventoryBalance.product_id)
+        .subquery()
+    )
+    products = session.execute(
+        select(
+            Product,
+            func.coalesce(totals.c.quantity, 0).label("quantity"),
+        )
+        .outerjoin(totals, totals.c.product_id == Product.id)
+        .where(Product.business_id == business_id, Product.active.is_(True))
+        .order_by(Product.name)
+    ).all()
+    low_stock = [
+        DashboardProduct(
+            id=product.id,
+            name=product.name,
+            quantity=str(quantity),
+            unit=product.unit,
+            minimum_stock=str(product.minimum_stock),
+        )
+        for product, quantity in products
+        if product.minimum_stock > 0 and quantity <= product.minimum_stock
+    ]
+    out_of_stock_count = sum(1 for _, quantity in products if quantity <= 0)
+    total_stock = sum((quantity for _, quantity in products), start=Decimal("0"))
+    overall_by_unit: dict[str, Decimal] = {}
+    for product, quantity in products:
+        overall_by_unit[product.unit] = overall_by_unit.get(product.unit, Decimal("0")) + quantity
+    on_hand_by_unit = {
+        unit: quantity for unit, quantity in overall_by_unit.items() if quantity > 0
+    }
+    stock_by_unit = [
+        DashboardUnitTotal(unit=unit, quantity=str(quantity))
+        for unit, quantity in sorted(on_hand_by_unit.items())
+    ]
+
+    location_rows = session.execute(
+        select(
+            Location,
+            Product.unit,
+            func.sum(InventoryBalance.quantity).label("quantity"),
+            func.count(func.distinct(InventoryBalance.product_id)).label("product_count"),
+        )
+        .join(
+            InventoryBalance,
+            (InventoryBalance.business_id == Location.business_id)
+            & (InventoryBalance.location_id == Location.id),
+        )
+        .join(
+            Product,
+            (Product.business_id == InventoryBalance.business_id)
+            & (Product.id == InventoryBalance.product_id),
+        )
+        .where(Location.business_id == business_id, InventoryBalance.quantity > 0)
+        .group_by(Location.id, Product.unit)
+        .order_by(Location.name, Product.unit)
+    ).all()
+    location_totals: dict[UUID, dict] = {}
+    for location, unit, quantity, product_count in location_rows:
+        location_total = location_totals.setdefault(
+            location.id,
+            {
+                "name": _location_path(session, business_id, location),
+                "product_count": 0,
+                "stock_by_unit": [],
+            },
+        )
+        location_total["product_count"] += product_count
+        location_total["stock_by_unit"].append(
+            DashboardUnitTotal(unit=unit, quantity=str(quantity))
+        )
+    locations = [DashboardLocation(**location) for location in location_totals.values()]
+
+    source = Location.__table__.alias("source_location")
+    destination = Location.__table__.alias("destination_location")
+    movement_rows = session.execute(
+        select(
+            StockMovement,
+            Product.name,
+            Product.unit,
+            source.c.name,
+            destination.c.name,
+        )
+        .join(
+            Product,
+            (Product.business_id == StockMovement.business_id)
+            & (Product.id == StockMovement.product_id),
+        )
+        .outerjoin(
+            source,
+            (source.c.business_id == StockMovement.business_id)
+            & (source.c.id == StockMovement.source_location_id),
+        )
+        .outerjoin(
+            destination,
+            (destination.c.business_id == StockMovement.business_id)
+            & (destination.c.id == StockMovement.destination_location_id),
+        )
+        .where(StockMovement.business_id == business_id)
+        .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
+        .limit(8)
+    ).all()
+    activity = [
+        DashboardActivity(
+            movement_type=movement.movement_type,
+            product_name=product_name,
+            quantity=str(movement.quantity_change),
+            unit=unit,
+            source_location=source_name,
+            destination_location=destination_name,
+            created_at=movement.created_at.isoformat(),
+        )
+        for movement, product_name, unit, source_name, destination_name in movement_rows
+    ]
+    return DashboardResponse(
+        product_count=len(products),
+        total_stock_units=str(total_stock) if len(on_hand_by_unit) <= 1 else None,
+        stock_by_unit=stock_by_unit,
+        low_stock_count=len(low_stock),
+        out_of_stock_count=out_of_stock_count,
+        low_stock_products=low_stock,
+        stock_by_location=locations,
+        recent_stock_activity=activity,
+    )
+
+
+def _location_path(session: Session, business_id: UUID, location: Location) -> str:
+    parts = [location.name]
+    parent_id = location.parent_location_id
+    visited = {location.id}
+    while parent_id is not None and parent_id not in visited:
+        visited.add(parent_id)
+        parent = session.scalar(
+            select(Location).where(Location.business_id == business_id, Location.id == parent_id)
+        )
+        if parent is None:
+            break
+        parts.append(parent.name)
+        parent_id = parent.parent_location_id
+    return " > ".join(reversed(parts))
 
 
 @app.post("/api/v1/locations", status_code=status.HTTP_201_CREATED)
