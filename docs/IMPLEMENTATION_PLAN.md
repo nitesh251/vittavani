@@ -16,6 +16,7 @@ The repository initially contained only the supplied product prompt: no applicat
 8. **Suppliers and files** — add purchase receipts, private object storage, and validated file metadata.
 9. **Production readiness** — implement authentication, tenant isolation tests, reports, CI, security controls, backups, and recovery procedures.
 10. **Deployment** — document and verify local startup and production deployment.
+11. **Dashboard and assistant refinement** — resolve the frontend/backend development-token configuration seam; expose real location and movement views, inventory filters, and explicit Normal Search / optional grounded AI modes. Acceptance requires authentication and API regressions, persisted-data display, and honest provider-unavailable behavior.
 
 ## Acceptance criteria
 

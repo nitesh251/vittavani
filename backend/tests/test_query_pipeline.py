@@ -242,6 +242,11 @@ def test_quantity_label_pluralizes_common_units():
 
 def test_http_lookup_requires_configured_development_token(client):
     assert client.post("/api/v1/ask", json={"query": "Where is Amul Butter?"}).status_code == 401
+    assert client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "invalid-token"},
+        json={"query": "Where is Amul Butter?"},
+    ).status_code == 401
     response = client.post(
         "/api/v1/ask",
         headers={"X-Dev-Token": "local-test-token"},
@@ -251,6 +256,66 @@ def test_http_lookup_requires_configured_development_token(client):
     assert response.status_code == 200
     assert response.json()["product_name"] == "Amul Butter"
     assert response.json()["original_query"] == "Where is Amul Butter?"
+
+
+def test_normal_search_uses_saved_hindi_alias_and_real_inventory(client):
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "अमूल बटर कितना बचा है?", "mode": "normal"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["product_name"] == "Amul Butter"
+    assert response.json()["quantity"] == "23"
+    assert response.json()["unit"] == "packet"
+    assert "23 packets" in response.json()["message"]
+
+
+def test_ai_mode_uses_mocked_interpretation_and_database_facts(client, monkeypatch):
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+    monkeypatch.setattr("app.main.settings.ai_provider", "groq")
+    monkeypatch.setattr("app.main.settings.ai_model", "test-model")
+    monkeypatch.setattr(
+        "app.main.extract_product_query",
+        lambda question: {"intent": "stock", "product_query": "Amul Butter"},
+    )
+
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "How much butter is left?", "mode": "ai"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["quantity"] == "23"
+    assert response.json()["message"].startswith("Amul Butter: 23 packets available.")
+    assert response.json()["provider"] == "groq"
+    assert response.json()["model"] == "test-model"
+
+
+def test_ai_mode_reports_unconfigured_provider_without_affecting_normal_search(client, monkeypatch):
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: False)
+    headers = {"X-Dev-Token": "local-test-token"}
+
+    status_response = client.get("/api/v1/ai/status", headers=headers)
+    ai_response = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "Amul Butter?", "mode": "ai"},
+    )
+    normal_response = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "Amul Butter?"},
+    )
+
+    assert status_response.status_code == 200
+    assert status_response.json() == {"configured": False, "provider": None, "model": None}
+    assert ai_response.status_code == 503
+    assert "Normal Search" in ai_response.json()["detail"]
+    assert normal_response.status_code == 200
+    assert normal_response.json()["quantity"] == "23"
 
 
 def test_dashboard_reports_real_tenant_inventory_aggregates(client):
@@ -325,6 +390,32 @@ def test_dashboard_reports_low_stock_and_recent_activity(client, session):
     assert data["low_stock_products"][0]["display_quantity"] == "2 packets"
     assert data["recent_stock_activity"][0]["display_quantity"] == "2 packets"
     assert data["recent_stock_activity"][0]["product_name"] == "Milk"
+
+
+def test_stock_movement_history_returns_tenant_scoped_location_paths(client, session):
+    session.add(
+        StockMovement(
+            business_id=BUSINESS_ID,
+            product_id=UUID("00000000-0000-0000-0000-000000000020"),
+            source_location_id=UUID("00000000-0000-0000-0000-000000000012"),
+            destination_location_id=UUID("00000000-0000-0000-0000-000000000010"),
+            movement_type="transfer",
+            quantity_change=Decimal("2"),
+            note="Reorganized",
+            initiated_by="test",
+        )
+    )
+    session.commit()
+
+    response = client.get("/api/v1/stock-movements?limit=10", headers={"X-Dev-Token": "local-test-token"})
+
+    assert response.status_code == 200
+    movement = response.json()["items"][0]
+    assert movement["product_name"] == "Amul Butter"
+    assert movement["display_quantity"] == "2 packets"
+    assert movement["source_location"] == "Storeroom > Rack B > Shelf 2"
+    assert movement["destination_location"] == "Storeroom"
+    assert movement["note"] == "Reorganized"
 
 
 def test_dashboard_returns_zero_counts_for_empty_business(client, session, monkeypatch):

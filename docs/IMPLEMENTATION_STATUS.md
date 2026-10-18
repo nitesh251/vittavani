@@ -14,6 +14,9 @@ Status reflects code in this repository; “implemented” does not imply produc
 - **Dashboard:** tenant-scoped aggregates, low/out-of-stock counts, per-unit and per-location stock (without converting unlike units), low-stock alerts, and recent stock movement data are served from inventory records; unsupported sales and customer-credit metrics are omitted.
 - **Development UI:** responsive dashboard and inventory management forms for product creation/editing, receipts, adjustments, transfers, and location creation; successful mutations refresh the dashboard and inventory from the API. Existing text-query and voice flows remain available; browser speech recognition has language choices, transcript editing, listening/error/unsupported handling, and typed fallback. Optional answer speech includes a saved preference, unsupported-browser explanation, and stop control.
 - **Server-side API proxy:** the Next.js same-origin API route attaches the development token server-side; the token is not embedded in or sent by the browser bundle.
+- **Development authentication configuration:** the proxy reads `DEV_API_TOKEN` and accepts the existing `NEXT_PUBLIC_DEV_API_TOKEN` setting as a server-route-only compatibility fallback; both must match the root `.env` token. The backend still enforces `X-Dev-Token`.
+- **Inventory browsing:** product search covers canonical names, aliases, and SKUs; stock status and sort filters are available. Locations display hierarchy paths and unit-grouped stock, and stock history displays tenant-scoped locations, movement notes, timestamps, and actual records.
+- **Assistant modes:** Normal Search uses the deterministic database lookup. Optional Groq mode interprets a query into a validated read intent and product name before using the same database lookup; no LLM-supplied quantity, location, or SQL is trusted. AI status/configuration failures are surfaced with Normal Search as the fallback.
 - **Quantity display:** shared Decimal formatting avoids exponent notation, redundant trailing zeroes, and floating-point conversion; APIs provide formatted unit labels with Indian digit grouping, and the UI displays those labels consistently.
 - Backend quantity-formatting and API label fields have regression coverage. Low-stock alerts are separate from out-of-stock counts and do not include zero balances.
 - **Dashboard tests:** tenant-scoped inventory totals, mixed-unit grouping without combining incompatible quantities, low-stock alerts, recent movements, empty-business result, and omission of unsupported sales/credit metrics are covered.
@@ -33,7 +36,7 @@ Status reflects code in this repository; “implemented” does not imply produc
 - Sales, idempotency, payments, customer credit ledger, suppliers, and purchases.
 - Real microphone hardware, actual browser permission dialogs, and Hindi/Hinglish recognition accuracy across devices have not been verified.
 - Onboarding, sales, customer udhaar, reports, product/location pagination, and exports.
-- Optional LLM adapter, mutation confirmations, and command audit/retention controls.
+- Mutation confirmations for AI-initiated stock writes (AI mode currently only handles read queries), command audit/retention controls.
 - Private file storage, upload validation, data export/deletion workflows, backup/restore verification, CI, and end-to-end browser tests.
 - Production frontend build/deployment and hosting-specific hardening.
 
@@ -49,4 +52,4 @@ All non-health API routes require the explicit development token in the `X-Dev-T
 
 Copy `.env.example` to `.env`, then run `docker compose up -d db`, `cd backend && python -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'`, `alembic upgrade head`, and `python -m app.seed_demo`. Start the API with `uvicorn app.main:app --reload` from `backend/`; start the web app with `cd frontend && npm install && npm run dev`. Run backend tests from `backend/` using `pytest`.
 
-Backend defaults and the local development token are documented in `.env.example`; the frontend API URL and matching server-side development token belong in ignored `frontend/.env.local`. Never put real secrets in source control or `NEXT_PUBLIC_*` variables.
+Backend defaults and optional AI setting names are documented in `.env.example`; the frontend API URL and matching server-side development token belong in ignored `frontend/.env.local`. For PowerShell restart steps and Groq setup, see the README. Prefer `DEV_API_TOKEN` in the frontend environment; the proxy accepts legacy `NEXT_PUBLIC_DEV_API_TOKEN` server-side only. Never put real secrets in source control or browser-accessible `NEXT_PUBLIC_*` variables.

@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     dev_api_token: str = ""
     dev_business_id: str = ""
     frontend_origin: str = "http://localhost:3000"
+    ai_provider: str = ""
+    ai_model: str = ""
+    groq_api_key: str = ""
+    ai_timeout_seconds: int = 10
 
     model_config = SettingsConfigDict(env_file=Path(__file__).resolve().parents[2] / ".env", extra="ignore")
 

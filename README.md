@@ -16,17 +16,40 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 4. Apply migrations: `alembic upgrade head` from `backend/`.
 5. Create the optional sample data explicitly: `python -m app.seed_demo` from `backend/`. This command refuses non-development mode or an already existing configured business.
 6. Start the API: `uvicorn app.main:app --reload` from `backend/`.
-7. Configure the web app's local API connection in `frontend/.env.local`: set `NEXT_PUBLIC_API_URL=http://localhost:8000` and `DEV_API_TOKEN` to the same local-only value as the backend. `.env.local` is ignored by Git. A same-origin Next.js route attaches the token server-side during development; it is not sent in the browser bundle.
+7. Configure the web app in `frontend/.env.local`: set `NEXT_PUBLIC_API_URL=http://localhost:8000` and `DEV_API_TOKEN` to the same local-only value as the backend's `DEV_API_TOKEN`. The server-side proxy also accepts the legacy `NEXT_PUBLIC_DEV_API_TOKEN` name, but prefer `DEV_API_TOKEN` in `frontend/.env.local` so the token is clearly server-only. `.env.local` is ignored by Git. The same-origin Next.js route attaches the token to backend requests; the frontend component never reads or sends it.
 8. Install and start the frontend: `npm install && npm run dev` from `frontend/`.
 9. Open `http://localhost:3000`. Health check: `http://localhost:8000/health`.
 
 Run backend tests using `pytest` from `backend/`. Check frontend types with `npm run lint` and make a production build with `npm run build` from `frontend/`.
 
+### Authentication and restart guidance
+
+The API reads `DEV_API_TOKEN` and `DEV_BUSINESS_ID` from the repository-root `.env`. The Next.js server-side proxy reads `DEV_API_TOKEN` from `frontend/.env.local` (or the legacy `NEXT_PUBLIC_DEV_API_TOKEN` name); the values must match. The browser sends requests only to the same-origin `/api/v1/` route, and the proxy forwards the credential as the backend's `X-Dev-Token` header. Never include the token in source code, browser code, logs, or documentation.
+
+After changing either environment file, stop and restart the corresponding service so it reloads settings. From the repository root in separate PowerShell windows:
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload
+```
+
+```powershell
+cd frontend
+npm run dev
+```
+
+Verify the API is running at `http://localhost:8000/health`, then open `http://localhost:3000`; Dashboard and Inventory should load through the same-origin proxy. If authentication still fails, compare the token values locally without printing them and confirm both processes were restarted.
+
+### Optional AI Assistant
+
+Normal Search works without an LLM. To enable the Groq-backed AI Assistant, set `AI_PROVIDER=groq`, `AI_MODEL` to a model supported by your Groq account, and `GROQ_API_KEY` in the repository-root `.env`, then restart FastAPI and Next.js. `AI_TIMEOUT_SECONDS` optionally controls the provider timeout (bounded by the backend). The key is used only by the backend; the model interprets a query, while inventory quantities and locations continue to come from database lookup results. If these settings are absent or invalid, the UI explains that AI mode is unavailable and Normal Search remains usable.
+
 ## Inventory workflows
 
 The dashboard includes product creation/editing, storage-location creation, and stock receipt, adjustment, and transfer forms. Changes are sent to the FastAPI backend and the dashboard is refreshed from persisted API data after a successful write. Adjustments accept a signed quantity (negative reduces stock); the API rejects a balance below zero. Product units cannot be changed once inventory or movement history exists.
 
-The corresponding development-token-protected endpoints are `GET /api/v1/products`, `GET /api/v1/locations`, `PUT /api/v1/products/{product_id}`, `POST /api/v1/inventory/receipts`, `POST /api/v1/inventory/adjustments`, and `POST /api/v1/inventory/transfers`. No schema migration is required for these operations. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for test coverage and the limitation on live PostgreSQL verification.
+The corresponding development-token-protected endpoints include `GET /api/v1/products`, `GET /api/v1/locations`, `GET /api/v1/stock-movements`, `GET /api/v1/ai/status`, `PUT /api/v1/products/{product_id}`, `POST /api/v1/inventory/receipts`, `POST /api/v1/inventory/adjustments`, and `POST /api/v1/inventory/transfers`. No schema migration is required for these operations. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for test coverage and the limitation on live PostgreSQL verification.
 
 The demo seed is optional and does not run on app startup. To reset local development data, stop the database and remove its volume with `docker compose down -v`; this deletes local database contents.
 

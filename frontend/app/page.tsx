@@ -29,6 +29,21 @@ type Dashboard = {
   }[];
 };
 
+type StockMovement = {
+  id: string;
+  product_name: string;
+  movement_type: string;
+  quantity: string;
+  display_quantity: string;
+  unit: string;
+  source_location: string | null;
+  destination_location: string | null;
+  note: string | null;
+  created_at: string;
+};
+
+type AssistantMode = "normal" | "ai";
+
 type InventoryProduct = {
   id: string;
   name: string;
@@ -79,25 +94,39 @@ const emptyProductForm = {
   active: true,
 };
 
+function apiError(response: Response, defaultMessage: string) {
+  if (response.status === 401) {
+    return "API authentication failed. Check that DEV_API_TOKEN in the repository-root .env matches the token in frontend/.env.local, then restart both the API and Next.js.";
+  }
+  return response
+    .clone()
+    .json()
+    .then((data: { detail?: string }) => data.detail ?? defaultMessage)
+    .catch(() => defaultMessage);
+}
+
 function movementLabel(value: string) {
   return value.replaceAll("_", " ");
 }
 
-function productBalanceSummary(product: InventoryProduct) {
+function productBalanceSummary(
+  product: InventoryProduct,
+  locationNames: Map<string, string>,
+) {
   return product.balances.length
     ? product.balances
-        .map((balance) => `${balance.location_name}: ${balance.display_quantity}`)
+        .map((balance) => `${locationNames.get(balance.location_id) ?? balance.location_name}: ${balance.display_quantity}`)
         .join(" · ")
     : "No location balance";
 }
 
-function productDetails(product: InventoryProduct) {
+function productDetails(product: InventoryProduct, locationNames: Map<string, string>) {
   const sku = product.sku ? `SKU ${product.sku}` : "";
   return [
     sku,
     `Selling price ₹${product.selling_price}`,
     `Minimum ${product.display_minimum_stock}`,
-    productBalanceSummary(product),
+    productBalanceSummary(product, locationNames),
   ].filter(Boolean).join(" · ");
 }
 
@@ -131,6 +160,14 @@ export default function Home() {
   const [dashboardError, setDashboardError] = useState("");
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [locations, setLocations] = useState<InventoryLocation[]>([]);
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [aiConfigured, setAiConfigured] = useState(false);
+  const [aiProvider, setAiProvider] = useState("");
+  const [aiModel, setAiModel] = useState("");
+  const [assistantMode, setAssistantMode] = useState<AssistantMode>("normal");
+  const [productSearch, setProductSearch] = useState("");
+  const [productStatusFilter, setProductStatusFilter] = useState("all");
+  const [productSort, setProductSort] = useState("name");
   const [inventoryLoading, setInventoryLoading] = useState(true);
   const [inventoryError, setInventoryError] = useState("");
   const [inventoryNotice, setInventoryNotice] = useState("");
@@ -156,7 +193,7 @@ export default function Home() {
     try {
       const response = await fetch("/api/v1/dashboard", { headers });
       if (!response.ok) {
-        throw new Error(response.status === 401 ? "Development API token is missing or invalid." : "Could not load inventory summary.");
+        throw new Error(await apiError(response, "Could not load inventory summary."));
       }
       setDashboard((await response.json()) as Dashboard);
     } catch (caught) {
@@ -170,18 +207,26 @@ export default function Home() {
     setInventoryLoading(true);
     setInventoryError("");
     try {
-      const [productResponse, locationResponse] = await Promise.all([
+      const [productResponse, locationResponse, movementResponse, aiResponse] = await Promise.all([
         fetch("/api/v1/products", { headers }),
         fetch("/api/v1/locations", { headers }),
+        fetch("/api/v1/stock-movements?limit=100", { headers }),
+        fetch("/api/v1/ai/status", { headers }),
       ]);
-      if (!productResponse.ok || !locationResponse.ok) {
-        const failed = !productResponse.ok ? productResponse : locationResponse;
-        throw new Error(failed.status === 401 ? "Development API token is missing or invalid." : "Could not load products and locations.");
+      const failed = [productResponse, locationResponse, movementResponse, aiResponse].find((response) => !response.ok);
+      if (failed) {
+        throw new Error(await apiError(failed, "Could not load products and inventory history."));
       }
       const productData = (await productResponse.json()) as { items: InventoryProduct[] };
       const locationData = (await locationResponse.json()) as { items: InventoryLocation[] };
+      const movementData = (await movementResponse.json()) as { items: StockMovement[] };
+      const aiData = (await aiResponse.json()) as { configured: boolean; provider: string | null; model: string | null };
       setProducts(productData.items);
       setLocations(locationData.items);
+      setStockMovements(movementData.items);
+      setAiConfigured(aiData.configured);
+      setAiProvider(aiData.provider ?? "");
+      setAiModel(aiData.model ?? "");
       setStockForm((current) => {
         const selectedProduct = productData.items.find((product) => product.id === current.product_id && product.active)
           ?? productData.items.find((product) => product.active);
@@ -222,8 +267,7 @@ export default function Home() {
     try {
       const response = await fetch(path, { method, headers, body: JSON.stringify(body) });
       if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(data.detail ?? `Could not save inventory changes (${response.status}).`);
+        throw new Error(await apiError(response, `Could not save inventory changes (${response.status}).`));
       }
       setInventoryNotice(success);
       await Promise.all([loadDashboard(), loadInventory()]);
@@ -319,10 +363,10 @@ export default function Home() {
       const response = await fetch("/api/v1/ask", {
         method: "POST",
         headers,
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, mode: assistantMode }),
       });
       if (!response.ok) {
-        throw new Error(response.status === 401 ? "Development API token is missing or invalid." : "Could not reach Vittavani. Check that the API is running.");
+        throw new Error(await apiError(response, "Could not reach Vittavani. Check that the API is running."));
       }
       const result = (await response.json()) as Answer;
       setAnswer(result);
@@ -417,6 +461,27 @@ export default function Home() {
     setSpeaking(false);
   }
 
+  const locationNames = new Map(locations.map((location) => [location.id, location.full_name]));
+  const visibleProducts = products
+    .filter((product) => {
+      const search = productSearch.trim().toLocaleLowerCase();
+      const matchesSearch = !search || [
+        product.name,
+        product.sku ?? "",
+        ...product.aliases,
+      ].some((value) => value.toLocaleLowerCase().includes(search));
+      const quantity = Number(product.quantity);
+      const matchesStatus = productStatusFilter === "all"
+        || (productStatusFilter === "in-stock" && quantity > 0)
+        || (productStatusFilter === "low-stock" && quantity > 0 && Number(product.minimum_stock) > 0 && quantity <= Number(product.minimum_stock))
+        || (productStatusFilter === "out-of-stock" && quantity <= 0)
+        || (productStatusFilter === "inactive" && !product.active);
+      return matchesSearch && matchesStatus;
+    })
+    .sort((left, right) => productSort === "quantity"
+      ? Number(right.quantity) - Number(left.quantity) || left.name.localeCompare(right.name)
+      : left.name.localeCompare(right.name));
+
   return (
     <main className="page">
       <header className="topbar">
@@ -427,6 +492,8 @@ export default function Home() {
         <nav className="main-nav" aria-label="Main navigation">
           <a href="#dashboard">Dashboard</a>
           <a href="#inventory">Inventory</a>
+          <a href="#locations">Locations</a>
+          <a href="#stock-movements">Stock Movements</a>
           <a href="#ask">Ask Vittavani</a>
         </nav>
         <span className="company">A product of Vinayaka Services</span>
@@ -501,6 +568,12 @@ export default function Home() {
                 warning={dashboard.out_of_stock_count > 0}
               />
             </div>
+            <section className="quick-actions" aria-label="Quick actions">
+              <strong>Quick actions</strong>
+              <a className="quick-action" href="#stock-entry">＋ Receive stock</a>
+              <a className="quick-action" href="#stock-entry" onClick={() => setStockMode("transfer")}>⇄ Transfer stock</a>
+              <a className="quick-action" href="#ask">✦ Ask Vittavani</a>
+            </section>
             <div className="dashboard-columns">
               <section className="data-card" aria-labelledby="low-stock-title">
                 <div className="card-heading">
@@ -637,7 +710,7 @@ export default function Home() {
                 {products.filter((product) => product.active).length === 0 || locations.length === 0 ? (
                   <p className="card-empty">Add an active product and a storage location before recording stock changes.</p>
                 ) : (
-                  <form className="inventory-form" onSubmit={saveStock}>
+                  <form className="inventory-form" id="stock-entry" onSubmit={saveStock}>
                     <label>Action<select value={stockMode} onChange={(event) => setStockMode(event.target.value)}>
                       <option value="receipt">Receive stock</option>
                       <option value="adjustment">Adjust stock</option>
@@ -692,13 +765,24 @@ export default function Home() {
                 <div><h3 id="inventory-products-title">Product balances</h3><p>Persisted balances grouped by product and location</p></div>
                 <span className="count-pill">{products.length}</span>
               </div>
+              <div className="inventory-toolbar">
+                <label className="search-field">Search products<input type="search" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Name, SKU, or alias" /></label>
+                <label>Stock status<select value={productStatusFilter} onChange={(event) => setProductStatusFilter(event.target.value)}>
+                  <option value="all">All products</option><option value="in-stock">In stock</option>
+                  <option value="low-stock">Low stock</option><option value="out-of-stock">Out of stock</option>
+                  <option value="inactive">Inactive</option>
+                </select></label>
+                <label>Sort by<select value={productSort} onChange={(event) => setProductSort(event.target.value)}>
+                  <option value="name">Name</option><option value="quantity">Stock quantity</option>
+                </select></label>
+              </div>
               {products.length === 0 ? <p className="card-empty">No products yet. Add a product above to begin building your catalogue.</p> : (
                 <ul className="data-list product-list">
-                  {products.map((product) => (
+                  {visibleProducts.map((product) => (
                     <li key={product.id}>
                       <span>
                         <strong>{product.name}{!product.active && <span className="movement-type"> · inactive</span>}</strong>
-                        <small>{productDetails(product)}</small>
+                        <small>{productDetails(product, locationNames)}</small>
                       </span>
                       <span className="product-total">{product.display_quantity}</span>
                       <button className="text-button" type="button" onClick={() => editProduct(product)}>Edit</button>
@@ -706,8 +790,50 @@ export default function Home() {
                   ))}
                 </ul>
               )}
+              {products.length > 0 && visibleProducts.length === 0 && <p className="card-empty">No products match those filters.</p>}
             </section>
           </>
+        )}
+      </section>
+
+      <section className="inventory-section auxiliary-section" id="locations" aria-labelledby="locations-title">
+        <div className="section-heading">
+          <div><p className="eyebrow">YOUR STORAGE MAP</p><h2 id="locations-title">Locations</h2><p className="intro">Browse your location hierarchy and recorded stock by unit.</p></div>
+        </div>
+        {locations.length === 0 ? <p className="dashboard-state empty-state">No locations have been created yet. Add one in Inventory to start organizing stock.</p> : (
+          <div className="location-grid">
+            {locations.map((location) => {
+              const stock = dashboard?.stock_by_location.find((row) => row.id === location.id);
+              return <article className="data-card location-card" key={location.id}>
+                <span className="location-icon" aria-hidden="true">⌂</span>
+                <h3>{location.name}</h3>
+                <p>{location.full_name}</p>
+                <small>{stock ? `${stock.product_count} ${stock.product_count === 1 ? "product" : "products"} · ${stock.stock_by_unit.map((item) => item.display_quantity).join(" · ")}` : "No stock recorded here"}</small>
+              </article>;
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="inventory-section auxiliary-section" id="stock-movements" aria-labelledby="stock-movements-title">
+        <div className="section-heading">
+          <div><p className="eyebrow">AUDIT TRAIL</p><h2 id="stock-movements-title">Stock movements</h2><p className="intro">Receipts, adjustments, and transfers recorded for your business.</p></div>
+          <button className="refresh-button" type="button" onClick={() => void loadInventory()} disabled={inventoryLoading}>{inventoryLoading ? "Loading…" : "↻ Refresh"}</button>
+        </div>
+        {inventoryLoading ? <p className="dashboard-state" role="status">Loading stock history…</p> : stockMovements.length === 0 ? (
+          <p className="dashboard-state empty-state">Stock activity will appear after you record a receipt, adjustment, or transfer.</p>
+        ) : (
+          <div className="data-card movement-table-wrap">
+            <div className="movement-table" role="table" aria-label="Stock movement history">
+              <div className="movement-row movement-header" role="row"><span>Product / movement</span><span>Quantity</span><span>Route / note</span><span>Recorded</span></div>
+              {stockMovements.map((movement) => <div className="movement-row" role="row" key={movement.id}>
+                <span><strong>{movement.product_name}</strong><small>{movementLabel(movement.movement_type)}</small></span>
+                <span className="stock-quantity">{movement.display_quantity}</span>
+                <span><small>{movement.source_location ? `${movement.source_location} → ` : ""}{movement.destination_location ?? movement.source_location ?? "Location not recorded"}{movement.note ? ` · ${movement.note}` : ""}</small></span>
+                <time dateTime={movement.created_at}>{new Date(movement.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
+              </div>)}
+            </div>
+          </div>
         )}
       </section>
 
@@ -715,6 +841,17 @@ export default function Home() {
         <p className="eyebrow">YOUR BUSINESS, IN YOUR WORDS</p>
         <h2 id="welcome-title">Ask Vittavani</h2>
         <p className="intro">Ask about your products in English, Hindi, or Hinglish.</p>
+        <div className="assistant-modes" role="group" aria-label="Assistant mode">
+          <button type="button" className={assistantMode === "normal" ? "mode-active" : ""} aria-pressed={assistantMode === "normal"} onClick={() => setAssistantMode("normal")}>Normal Search</button>
+          <button type="button" className={assistantMode === "ai" ? "mode-active" : ""} aria-pressed={assistantMode === "ai"} onClick={() => setAssistantMode("ai")}>AI Assistant</button>
+        </div>
+        <p className={`ai-status${assistantMode === "ai" && !aiConfigured ? " ai-unavailable" : ""}`} role="status">
+          {assistantMode === "normal"
+            ? "Normal Search uses deterministic product and alias matching; no AI service is required."
+            : aiConfigured
+              ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Stock facts are still fetched from your inventory.`
+              : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search."}
+        </p>
         <form className="ask-card" onSubmit={submit}>
           <label htmlFor="business-query">What would you like to know?</label>
           <textarea

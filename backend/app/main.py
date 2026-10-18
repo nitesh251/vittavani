@@ -1,16 +1,17 @@
 import secrets
 from contextlib import contextmanager
 from decimal import Decimal
-from typing import Iterator
+from typing import Iterator, Literal
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.ai_service import AIProviderError, ai_is_configured, extract_product_query
 from app.config import settings
 from app.database import get_db
 from app.formatting import format_quantity, format_quantity_label
@@ -33,6 +34,7 @@ class AskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1, max_length=500)
+    mode: Literal["normal", "ai"] = "normal"
 
 
 class AskResponse(BaseModel):
@@ -45,6 +47,9 @@ class AskResponse(BaseModel):
     candidates: list[str]
     clarification_required: bool
     message: str
+    mode: Literal["normal", "ai"] = "normal"
+    provider: str | None = None
+    model: str | None = None
 
 
 class LocationCreate(BaseModel):
@@ -152,6 +157,23 @@ class LocationList(BaseModel):
     items: list[LocationResponse]
 
 
+class StockMovementResponse(BaseModel):
+    id: UUID
+    product_name: str
+    movement_type: str
+    quantity: str
+    display_quantity: str
+    unit: str
+    source_location: str | None
+    destination_location: str | None
+    note: str | None
+    created_at: str
+
+
+class StockMovementList(BaseModel):
+    items: list[StockMovementResponse]
+
+
 @contextmanager
 def _transaction(session: Session) -> Iterator[None]:
     try:
@@ -230,10 +252,34 @@ def ask(
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> AskResponse:
-    result = lookup_product(session, business_id, body.query)
+    query = body.query
+    if body.mode == "ai":
+        if not ai_is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and "
+                    "GROQ_API_KEY on the backend, or use Normal Search."
+                ),
+            )
+        try:
+            interpretation = extract_product_query(body.query)
+        except AIProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if interpretation["intent"] == "low_stock":
+            query = "show low stock items"
+        elif interpretation["product_query"]:
+            query = (
+                f"Where is {interpretation['product_query']}?"
+                if interpretation["intent"] == "location"
+                else f"How much {interpretation['product_query']} available?"
+            )
+        else:
+            query = "unrecognized inventory question"
+    result = lookup_product(session, business_id, query)
     return AskResponse(
         intent=result.intent,
-        original_query=result.original_query,
+        original_query=body.query,
         product_name=result.product_name,
         quantity=str(result.quantity) if result.quantity is not None else None,
         unit=result.unit,
@@ -241,7 +287,22 @@ def ask(
         candidates=list(result.candidates),
         clarification_required=result.clarification_required,
         message=result.message,
+        mode=body.mode,
+        provider=settings.ai_provider if body.mode == "ai" else None,
+        model=settings.ai_model if body.mode == "ai" else None,
     )
+
+
+@app.get("/api/v1/ai/status")
+def ai_status(
+    _business_id: UUID = Depends(development_business_id),
+) -> dict[str, str | bool | None]:
+    configured = ai_is_configured()
+    return {
+        "configured": configured,
+        "provider": settings.ai_provider if configured else None,
+        "model": settings.ai_model if configured else None,
+    }
 
 
 @app.get("/api/v1/dashboard", response_model=DashboardResponse)
@@ -499,6 +560,61 @@ def list_locations(
                 parent_location_id=location.parent_location_id,
             )
             for location in locations
+        ]
+    )
+
+
+@app.get("/api/v1/stock-movements", response_model=StockMovementList)
+def list_stock_movements(
+    limit: int = Query(default=100, ge=1, le=200),
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> StockMovementList:
+    source = Location.__table__.alias("source_location")
+    destination = Location.__table__.alias("destination_location")
+    rows = session.execute(
+        select(
+            StockMovement,
+            Product.name,
+            Product.unit,
+            source.c.id,
+            destination.c.id,
+        )
+        .join(
+            Product,
+            (Product.business_id == StockMovement.business_id)
+            & (Product.id == StockMovement.product_id),
+        )
+        .outerjoin(
+            source,
+            (source.c.business_id == StockMovement.business_id)
+            & (source.c.id == StockMovement.source_location_id),
+        )
+        .outerjoin(
+            destination,
+            (destination.c.business_id == StockMovement.business_id)
+            & (destination.c.id == StockMovement.destination_location_id),
+        )
+        .where(StockMovement.business_id == business_id)
+        .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
+        .limit(limit)
+    ).all()
+    paths = location_paths(session, business_id)
+    return StockMovementList(
+        items=[
+            StockMovementResponse(
+                id=movement.id,
+                product_name=product_name,
+                movement_type=movement.movement_type,
+                quantity=str(movement.quantity_change),
+                display_quantity=format_quantity_label(movement.quantity_change, unit),
+                unit=unit,
+                source_location=paths.get(source_id) if source_id else None,
+                destination_location=paths.get(destination_id) if destination_id else None,
+                note=movement.note,
+                created_at=movement.created_at.isoformat(),
+            )
+            for movement, product_name, unit, source_id, destination_id in rows
         ]
     )
 
