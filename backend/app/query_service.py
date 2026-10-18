@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.formatting import format_quantity
 from app.models import InventoryBalance, Location, Product, ProductAlias
 from app.query_understanding import Candidate, Intent, resolve_product, understand_query
 
@@ -57,7 +58,7 @@ def lookup_product(session: Session, business_id: UUID, text: str) -> LookupResu
             )
             available = total or Decimal("0")
             if product.minimum_stock > 0 and available <= product.minimum_stock:
-                low_stock.append(f"{product.name} ({available} {product.unit})")
+                low_stock.append(f"{product.name} ({format_quantity(available)} {product.unit})")
         message = (
             f"Low stock: {', '.join(low_stock)}."
             if low_stock
@@ -126,7 +127,7 @@ def lookup_product(session: Session, business_id: UUID, text: str) -> LookupResu
         .order_by(Location.name)
     ).all()
     locations = tuple(
-        f"{_location_path(session, business_id, location)} ({balance.quantity} {product.unit})"
+        f"{_location_path(session, business_id, location)} ({format_quantity(balance.quantity)} {product.unit})"
         for balance, location in balances
         if balance.quantity > 0
     )
@@ -138,7 +139,7 @@ def lookup_product(session: Session, business_id: UUID, text: str) -> LookupResu
             else f"No storage location is recorded for {product.name}."
         )
     elif query.intent == Intent.STOCK:
-        message = f"{product.name}: {total.normalize()} {product.unit} available."
+        message = f"{product.name}: {format_quantity(total)} {product.unit} available."
         if locations:
             message += f" Locations: {', '.join(locations)}."
         else:

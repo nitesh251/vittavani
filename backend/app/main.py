@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.formatting import format_quantity
 from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
 
@@ -19,7 +20,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type", "X-Dev-Token"],
 )
 
@@ -60,12 +61,35 @@ class ProductCreate(BaseModel):
     aliases: list[str] = Field(default_factory=list, max_length=25)
 
 
+class ProductUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=180)
+    sku: str | None = Field(default=None, max_length=80)
+    unit: str | None = Field(default=None, min_length=1, max_length=32)
+    selling_price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    minimum_stock: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=3)
+    active: bool | None = None
+    aliases: list[str] | None = Field(default=None, max_length=25)
+
+
 class StockReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     product_id: UUID
     location_id: UUID
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+    unit: str | None = Field(default=None, min_length=1, max_length=32)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class StockAdjustment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: UUID
+    location_id: UUID
+    quantity_change: Decimal = Field(ne=0, max_digits=14, decimal_places=3)
+    unit: str | None = Field(default=None, min_length=1, max_length=32)
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -76,13 +100,49 @@ class StockTransfer(BaseModel):
     source_location_id: UUID
     destination_location_id: UUID
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+    unit: str | None = Field(default=None, min_length=1, max_length=32)
     note: str | None = Field(default=None, max_length=500)
 
 
 class StockResult(BaseModel):
     product_id: UUID
     quantity: str
+    unit: str
     message: str
+
+
+class ProductBalance(BaseModel):
+    location_id: UUID
+    location_name: str
+    quantity: str
+
+
+class ProductResponse(BaseModel):
+    id: UUID
+    name: str
+    sku: str | None
+    unit: str
+    selling_price: str
+    minimum_stock: str
+    active: bool
+    aliases: list[str]
+    quantity: str
+    balances: list[ProductBalance]
+
+
+class LocationResponse(BaseModel):
+    id: UUID
+    name: str
+    full_name: str
+    parent_location_id: UUID | None
+
+
+class ProductList(BaseModel):
+    items: list[ProductResponse]
+
+
+class LocationList(BaseModel):
+    items: list[LocationResponse]
 
 
 class DashboardProduct(BaseModel):
@@ -298,6 +358,81 @@ def dashboard(
     )
 
 
+@app.get("/api/v1/products", response_model=ProductList)
+def list_products(
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> ProductList:
+    products = session.scalars(
+        select(Product).where(Product.business_id == business_id).order_by(Product.name)
+    ).all()
+    balances = session.execute(
+        select(InventoryBalance, Location.name)
+        .join(
+            Location,
+            (Location.business_id == InventoryBalance.business_id)
+            & (Location.id == InventoryBalance.location_id),
+        )
+        .where(InventoryBalance.business_id == business_id)
+        .order_by(Location.name)
+    ).all()
+    by_product: dict[UUID, list[ProductBalance]] = {}
+    quantities: dict[UUID, Decimal] = {}
+    for balance, location_name in balances:
+        by_product.setdefault(balance.product_id, []).append(
+            ProductBalance(
+                location_id=balance.location_id,
+                location_name=location_name,
+                quantity=str(balance.quantity),
+            )
+        )
+        quantities[balance.product_id] = quantities.get(balance.product_id, Decimal("0")) + balance.quantity
+    aliases = session.scalars(
+        select(ProductAlias).where(ProductAlias.business_id == business_id).order_by(ProductAlias.alias)
+    ).all()
+    aliases_by_product: dict[UUID, list[str]] = {}
+    for alias in aliases:
+        aliases_by_product.setdefault(alias.product_id, []).append(alias.alias)
+    return ProductList(
+        items=[
+            ProductResponse(
+                id=product.id,
+                name=product.name,
+                sku=product.sku,
+                unit=product.unit,
+                selling_price=str(product.selling_price),
+                minimum_stock=str(product.minimum_stock),
+                active=product.active,
+                aliases=aliases_by_product.get(product.id, []),
+                quantity=str(quantities.get(product.id, Decimal("0"))),
+                balances=by_product.get(product.id, []),
+            )
+            for product in products
+        ]
+    )
+
+
+@app.get("/api/v1/locations", response_model=LocationList)
+def list_locations(
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> LocationList:
+    locations = session.scalars(
+        select(Location).where(Location.business_id == business_id).order_by(Location.name)
+    ).all()
+    return LocationList(
+        items=[
+            LocationResponse(
+                id=location.id,
+                name=location.name,
+                full_name=_location_path(session, business_id, location),
+                parent_location_id=location.parent_location_id,
+            )
+            for location in locations
+        ]
+    )
+
+
 def _location_path(session: Session, business_id: UUID, location: Location) -> str:
     parts = [location.name]
     parent_id = location.parent_location_id
@@ -389,6 +524,121 @@ def create_product(
     return result
 
 
+@app.put("/api/v1/products/{product_id}", response_model=ProductResponse)
+def update_product(
+    product_id: UUID,
+    body: ProductUpdate,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> ProductResponse:
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="At least one product field must be provided")
+    if "name" in changes:
+        changes["name"] = changes["name"].strip()
+        if not changes["name"]:
+            raise HTTPException(status_code=422, detail="Product name cannot be blank")
+    if "unit" in changes:
+        changes["unit"] = changes["unit"].strip()
+        if not changes["unit"]:
+            raise HTTPException(status_code=422, detail="Product unit cannot be blank")
+    if "sku" in changes and changes["sku"] is not None:
+        changes["sku"] = changes["sku"].strip()
+        if not changes["sku"]:
+            raise HTTPException(status_code=422, detail="SKU cannot be blank")
+    if "aliases" in changes and changes["aliases"] is not None:
+        changes["aliases"] = [alias.strip() for alias in changes["aliases"]]
+        if any(not alias for alias in changes["aliases"]):
+            raise HTTPException(status_code=422, detail="Product aliases cannot be blank")
+        if len({alias.casefold() for alias in changes["aliases"]}) != len(changes["aliases"]):
+            raise HTTPException(status_code=422, detail="Product aliases must be unique")
+
+    try:
+        with session.begin():
+            product = session.scalar(
+                select(Product)
+                .where(Product.business_id == business_id, Product.id == product_id)
+                .with_for_update()
+            )
+            if product is None:
+                raise HTTPException(status_code=404, detail="Product not found")
+            if "unit" in changes and changes["unit"] != product.unit:
+                has_inventory = session.scalar(
+                    select(InventoryBalance.id).where(
+                        InventoryBalance.business_id == business_id,
+                        InventoryBalance.product_id == product_id,
+                    ).limit(1)
+                )
+                has_history = session.scalar(
+                    select(StockMovement.id).where(
+                        StockMovement.business_id == business_id,
+                        StockMovement.product_id == product_id,
+                    ).limit(1)
+                )
+                if has_inventory is not None or has_history is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Unit cannot change after inventory or movement history exists",
+                    )
+            aliases = changes.pop("aliases", None)
+            for field, value in changes.items():
+                setattr(product, field, value)
+            if aliases is not None:
+                session.query(ProductAlias).filter_by(
+                    business_id=business_id, product_id=product_id
+                ).delete(synchronize_session=False)
+                session.add_all(
+                    ProductAlias(business_id=business_id, product_id=product_id, alias=alias)
+                    for alias in aliases
+                )
+            session.flush()
+            response = _product_response(session, business_id, product)
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="A product with this SKU or alias already exists") from exc
+    return response
+
+
+def _product_response(session: Session, business_id: UUID, product: Product) -> ProductResponse:
+    balance_rows = session.execute(
+        select(InventoryBalance, Location.name)
+        .join(
+            Location,
+            (Location.business_id == InventoryBalance.business_id)
+            & (Location.id == InventoryBalance.location_id),
+        )
+        .where(
+            InventoryBalance.business_id == business_id,
+            InventoryBalance.product_id == product.id,
+        )
+        .order_by(Location.name)
+    ).all()
+    aliases = session.scalars(
+        select(ProductAlias.alias)
+        .where(ProductAlias.business_id == business_id, ProductAlias.product_id == product.id)
+        .order_by(ProductAlias.alias)
+    ).all()
+    total = sum((balance.quantity for balance, _ in balance_rows), Decimal("0"))
+    return ProductResponse(
+        id=product.id,
+        name=product.name,
+        sku=product.sku,
+        unit=product.unit,
+        selling_price=str(product.selling_price),
+        minimum_stock=str(product.minimum_stock),
+        active=product.active,
+        aliases=list(aliases),
+        quantity=str(total),
+        balances=[
+            ProductBalance(
+                location_id=balance.location_id,
+                location_name=location_name,
+                quantity=str(balance.quantity),
+            )
+            for balance, location_name in balance_rows
+        ],
+    )
+
+
 def _require_active_product(session: Session, business_id: UUID, product_id: UUID) -> Product:
     product = session.scalar(
         select(Product).where(
@@ -409,6 +659,11 @@ def _require_location(session: Session, business_id: UUID, location_id: UUID) ->
         raise HTTPException(status_code=404, detail="Location not found")
 
 
+def _validate_unit(product: Product, requested_unit: str | None) -> None:
+    if requested_unit is not None and requested_unit.strip().casefold() != product.unit.casefold():
+        raise HTTPException(status_code=422, detail=f"Quantity unit must be {product.unit}")
+
+
 @app.post("/api/v1/inventory/receipts", response_model=StockResult, status_code=status.HTTP_201_CREATED)
 def receive_stock(
     body: StockReceipt,
@@ -418,6 +673,7 @@ def receive_stock(
     try:
         with session.begin():
             product = _require_active_product(session, business_id, body.product_id)
+            _validate_unit(product, body.unit)
             _require_location(session, business_id, body.location_id)
             balance = session.scalar(
                 select(InventoryBalance)
@@ -456,7 +712,67 @@ def receive_stock(
     return StockResult(
         product_id=product.id,
         quantity=str(total),
-        message=f"Received {body.quantity} {product.unit} of {product.name}.",
+        unit=product.unit,
+        message=f"Received {format_quantity(body.quantity)} {product.unit} of {product.name}. Balance at location: {format_quantity(total)} {product.unit}.",
+    )
+
+
+@app.post("/api/v1/inventory/adjustments", response_model=StockResult)
+def adjust_stock(
+    body: StockAdjustment,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> StockResult:
+    try:
+        with session.begin():
+            product = _require_active_product(session, business_id, body.product_id)
+            _validate_unit(product, body.unit)
+            _require_location(session, business_id, body.location_id)
+            balance = session.scalar(
+                select(InventoryBalance)
+                .where(
+                    InventoryBalance.business_id == business_id,
+                    InventoryBalance.product_id == body.product_id,
+                    InventoryBalance.location_id == body.location_id,
+                )
+                .with_for_update()
+            )
+            if balance is None and body.quantity_change < 0:
+                raise HTTPException(status_code=409, detail="Cannot reduce stock below zero")
+            if balance is None:
+                balance = InventoryBalance(
+                    business_id=business_id,
+                    product_id=body.product_id,
+                    location_id=body.location_id,
+                    quantity=body.quantity_change,
+                )
+                session.add(balance)
+            else:
+                adjusted = balance.quantity + body.quantity_change
+                if adjusted < 0:
+                    raise HTTPException(status_code=409, detail="Cannot reduce stock below zero")
+                balance.quantity = adjusted
+            session.add(
+                StockMovement(
+                    business_id=business_id,
+                    product_id=body.product_id,
+                    source_location_id=body.location_id if body.quantity_change < 0 else None,
+                    destination_location_id=body.location_id if body.quantity_change > 0 else None,
+                    movement_type="adjustment",
+                    quantity_change=body.quantity_change,
+                    initiated_by="development-token",
+                    note=body.note,
+                )
+            )
+            session.flush()
+            total = balance.quantity
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Inventory changed concurrently; retry the adjustment") from exc
+    return StockResult(
+        product_id=product.id,
+        quantity=str(total),
+        unit=product.unit,
+        message=f"Adjusted {product.name} by {format_quantity(body.quantity_change)} {product.unit}. Balance at location: {format_quantity(total)} {product.unit}.",
     )
 
 
@@ -472,6 +788,7 @@ def transfer_stock(
     try:
         with session.begin():
             product = _require_active_product(session, business_id, body.product_id)
+            _validate_unit(product, body.unit)
             _require_location(session, business_id, body.source_location_id)
             _require_location(session, business_id, body.destination_location_id)
             source = session.scalar(
@@ -528,5 +845,6 @@ def transfer_stock(
     return StockResult(
         product_id=product.id,
         quantity=str(remaining),
-        message=f"Moved {body.quantity} {product.unit} of {product.name}.",
+        unit=product.unit,
+        message=f"Moved {format_quantity(body.quantity)} {product.unit} of {product.name}. Balance at source: {format_quantity(remaining)} {product.unit}.",
     )
