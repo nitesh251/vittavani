@@ -19,6 +19,7 @@ from app.inventory_metrics import is_low_stock
 from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
+from app.query_understanding import Intent
 
 app = FastAPI(title="Vittavani API", version="0.1.0")
 app.add_middleware(
@@ -179,7 +180,7 @@ def _transaction(session: Session) -> Iterator[None]:
     try:
         yield
         session.commit()
-    except BaseException:
+    except Exception:
         session.rollback()
         raise
 
@@ -252,7 +253,8 @@ def ask(
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> AskResponse:
-    query = body.query
+    interpreted_intent: Intent | None = None
+    interpreted_product: str | None = None
     if body.mode == "ai":
         if not ai_is_configured():
             raise HTTPException(
@@ -266,17 +268,20 @@ def ask(
             interpretation = extract_product_query(body.query)
         except AIProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        if interpretation["intent"] == "low_stock":
-            query = "show low stock items"
-        elif interpretation["product_query"]:
-            query = (
-                f"Where is {interpretation['product_query']}?"
-                if interpretation["intent"] == "location"
-                else f"How much {interpretation['product_query']} available?"
-            )
-        else:
-            query = "unrecognized inventory question"
-    result = lookup_product(session, business_id, query)
+        interpreted_intent = {
+            "stock": Intent.STOCK,
+            "location": Intent.LOCATION,
+            "low_stock": Intent.LOW_STOCK,
+            "unknown": Intent.UNKNOWN,
+        }[interpretation["intent"]]
+        interpreted_product = interpretation["product_query"]
+    result = lookup_product(
+        session,
+        business_id,
+        body.query,
+        interpreted_intent=interpreted_intent,
+        interpreted_product=interpreted_product,
+    )
     return AskResponse(
         intent=result.intent,
         original_query=body.query,

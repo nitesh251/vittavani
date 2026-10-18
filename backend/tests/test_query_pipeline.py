@@ -297,6 +297,101 @@ def test_ai_mode_uses_mocked_interpretation_and_database_facts(client, monkeypat
     assert response.json()["model"] == "test-model"
 
 
+def test_ai_mode_uses_interpreted_intent_without_reparsing_product_text(client, session, monkeypatch):
+    session.add(
+        ProductAlias(
+            business_id=BUSINESS_ID,
+            product_id=UUID("00000000-0000-0000-0000-000000000020"),
+            alias="Where is Amul Butter",
+        )
+    )
+    session.commit()
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+    monkeypatch.setattr("app.main.settings.ai_provider", "groq")
+    monkeypatch.setattr("app.main.settings.ai_model", "test-model")
+    monkeypatch.setattr(
+        "app.main.extract_product_query",
+        lambda question: {"intent": "stock", "product_query": "Where is Amul Butter"},
+    )
+
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "Do I have butter?", "mode": "ai"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "stock_quantity"
+    assert response.json()["message"].startswith("Amul Butter: 23 packets available.")
+
+
+def test_ai_mode_handles_location_and_low_stock_intents(client, session, monkeypatch):
+    milk = Product(
+        id=UUID("00000000-0000-0000-0000-000000000074"),
+        business_id=BUSINESS_ID,
+        name="Milk",
+        unit="packet",
+        minimum_stock=Decimal("5"),
+    )
+    session.add(milk)
+    session.flush()
+    session.add(
+        InventoryBalance(
+            business_id=BUSINESS_ID,
+            product_id=milk.id,
+            location_id=UUID("00000000-0000-0000-0000-000000000010"),
+            quantity=Decimal("2"),
+        )
+    )
+    session.commit()
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+    monkeypatch.setattr("app.main.settings.ai_provider", "groq")
+    monkeypatch.setattr("app.main.settings.ai_model", "test-model")
+    interpretations = iter(
+        [
+            {"intent": "location", "product_query": "Amul Butter"},
+            {"intent": "low_stock", "product_query": None},
+        ]
+    )
+    monkeypatch.setattr("app.main.extract_product_query", lambda question: next(interpretations))
+    headers = {"X-Dev-Token": "local-test-token"}
+
+    location_response = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "Where is butter?", "mode": "ai"},
+    )
+    low_stock_response = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "Which products are nearly out?", "mode": "ai"},
+    )
+
+    assert location_response.status_code == 200
+    assert location_response.json()["intent"] == "product_location"
+    assert "Storeroom > Rack B > Shelf 2" in location_response.json()["message"]
+    assert low_stock_response.status_code == 200
+    assert "Milk (2 packets)" in low_stock_response.json()["message"]
+
+
+def test_ai_provider_failure_returns_a_sanitized_upstream_error(client, monkeypatch):
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+
+    def fail_provider(_question):
+        raise AIProviderError("AI Assistant is temporarily unavailable. Try Normal Search.")
+
+    monkeypatch.setattr("app.main.extract_product_query", fail_provider)
+
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "How much butter?", "mode": "ai"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "AI Assistant is temporarily unavailable. Try Normal Search."
+
+
 def test_ai_mode_reports_unconfigured_provider_without_affecting_normal_search(client, monkeypatch):
     monkeypatch.setattr("app.main.ai_is_configured", lambda: False)
     headers = {"X-Dev-Token": "local-test-token"}

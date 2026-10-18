@@ -16,7 +16,7 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 4. Apply migrations: `alembic upgrade head` from `backend/`.
 5. Create the optional sample data explicitly: `python -m app.seed_demo` from `backend/`. This command refuses non-development mode or an already existing configured business.
 6. Start the API: `uvicorn app.main:app --reload` from `backend/`.
-7. Configure the web app in `frontend/.env.local`: set `NEXT_PUBLIC_API_URL=http://localhost:8000` and `DEV_API_TOKEN` to the same local-only value as the backend's `DEV_API_TOKEN`. The server-side proxy also accepts the legacy `NEXT_PUBLIC_DEV_API_TOKEN` name, but prefer `DEV_API_TOKEN` in `frontend/.env.local` so the token is clearly server-only. `.env.local` is ignored by Git. The same-origin Next.js route attaches the token to backend requests; the frontend component never reads or sends it.
+7. Configure the web app in `frontend/.env.local`: set `NEXT_PUBLIC_API_URL=http://localhost:8000` and `DEV_API_TOKEN` to the same local-only value as the backend's `DEV_API_TOKEN`. If the file currently uses `NEXT_PUBLIC_DEV_API_TOKEN`, rename that setting to `DEV_API_TOKEN`; `NEXT_PUBLIC_*` values are intended for browser-visible configuration and must not contain credentials. `.env.local` is ignored by Git. The same-origin Next.js route attaches the token to backend requests; the frontend component never reads or sends it.
 8. Install and start the frontend: `npm install && npm run dev` from `frontend/`.
 9. Open `http://localhost:3000`. Health check: `http://localhost:8000/health`.
 
@@ -24,7 +24,7 @@ Run backend tests using `pytest` from `backend/`. Check frontend types with `npm
 
 ### Authentication and restart guidance
 
-The API reads `DEV_API_TOKEN` and `DEV_BUSINESS_ID` from the repository-root `.env`. The Next.js server-side proxy reads `DEV_API_TOKEN` from `frontend/.env.local` (or the legacy `NEXT_PUBLIC_DEV_API_TOKEN` name); the values must match. The browser sends requests only to the same-origin `/api/v1/` route, and the proxy forwards the credential as the backend's `X-Dev-Token` header. Never include the token in source code, browser code, logs, or documentation.
+The API reads `DEV_API_TOKEN` and `DEV_BUSINESS_ID` from the repository-root `.env`. The Next.js server-side proxy reads `DEV_API_TOKEN` from `frontend/.env.local`; the values must match. Rename any existing `NEXT_PUBLIC_DEV_API_TOKEN` entry to `DEV_API_TOKEN` in that file. The browser sends requests only to the same-origin `/api/v1/` route, and the proxy forwards the credential as the backend's `X-Dev-Token` header. Never include the token in source code, browser code, logs, or documentation.
 
 After changing either environment file, stop and restart the corresponding service so it reloads settings. From the repository root in separate PowerShell windows:
 

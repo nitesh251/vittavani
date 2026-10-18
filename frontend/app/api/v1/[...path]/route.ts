@@ -2,17 +2,17 @@ import { NextRequest } from "next/server";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
-const allowedEndpoints = new Set([
-  "ask",
-  "dashboard",
-  "ai/status",
-  "products",
-  "locations",
-  "stock-movements",
-  "inventory/receipts",
-  "inventory/adjustments",
-  "inventory/transfers",
-]);
+const endpointMethods: Record<string, readonly string[]> = {
+  ask: ["POST"],
+  dashboard: ["GET"],
+  "ai/status": ["GET"],
+  products: ["GET", "POST"],
+  locations: ["GET", "POST"],
+  "stock-movements": ["GET"],
+  "inventory/receipts": ["POST"],
+  "inventory/adjustments": ["POST"],
+  "inventory/transfers": ["POST"],
+};
 
 function isSameOrigin(request: NextRequest) {
   const origin = request.headers.get("origin");
@@ -34,8 +34,16 @@ function isSameOrigin(request: NextRequest) {
 async function forward(request: NextRequest, context: RouteContext) {
   const { path } = await context.params;
   const endpoint = path.join("/");
-  if (!allowedEndpoints.has(endpoint) && !/^products\/[0-9a-f-]{36}$/i.test(endpoint)) {
+  const methods = endpointMethods[endpoint]
+    ?? (/^products\/[0-9a-f-]{36}$/i.test(endpoint) ? ["PUT"] : undefined);
+  if (!methods) {
     return Response.json({ detail: "API route not found" }, { status: 404 });
+  }
+  if (!methods.includes(request.method)) {
+    return Response.json(
+      { detail: "Method not allowed" },
+      { status: 405, headers: { Allow: methods.join(", ") } },
+    );
   }
   if (request.method === "POST" || request.method === "PUT") {
     if (!isSameOrigin(request)) {
@@ -48,7 +56,7 @@ async function forward(request: NextRequest, context: RouteContext) {
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
   if (process.env.NODE_ENV === "development") {
-    const devToken = process.env.DEV_API_TOKEN ?? process.env.NEXT_PUBLIC_DEV_API_TOKEN;
+    const devToken = process.env.DEV_API_TOKEN;
     if (!devToken) {
       return Response.json(
         {

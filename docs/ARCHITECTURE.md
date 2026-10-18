@@ -26,7 +26,7 @@ The initial write routes support product/location creation, confirmed stock rece
 
 The Next.js home page combines database-derived catalogue/stock totals, grouped by configured unit without converting unlike quantities, low-stock/out-of-stock alerts, location rollups, and stock-movement history. Inventory supports name/alias/SKU search and status/sort filters. The assistant has Normal Search and AI Assistant modes; browser speech recognition uses Hindi/Indian English modes when supported, with editable transcripts and a typed fallback, and optional answer speech uses the browser speech synthesizer. Sales/customer balances are omitted because those records and APIs do not exist yet.
 
-In development, the same-origin Next.js API proxy attaches `X-Dev-Token` using the server environment variable `DEV_API_TOKEN`; the legacy `NEXT_PUBLIC_DEV_API_TOKEN` name is accepted only inside the server route for compatibility. Prefer the server-only name. The backend's root `.env` remains authoritative for token validation.
+In development, the same-origin Next.js API proxy attaches `X-Dev-Token` using the server environment variable `DEV_API_TOKEN`. Do not use a `NEXT_PUBLIC_*` variable for the token; rename any legacy frontend setting to `DEV_API_TOKEN`. The backend's root `.env` remains authoritative for token validation.
 
 ## Deployment and security
 

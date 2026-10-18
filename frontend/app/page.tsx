@@ -94,7 +94,7 @@ const emptyProductForm = {
   active: true,
 };
 
-function apiError(response: Response, defaultMessage: string) {
+async function apiError(response: Response, defaultMessage: string): Promise<string> {
   if (response.status === 401) {
     return "API authentication failed. Check that DEV_API_TOKEN in the repository-root .env matches the token in frontend/.env.local, then restart both the API and Next.js.";
   }
@@ -162,6 +162,7 @@ export default function Home() {
   const [locations, setLocations] = useState<InventoryLocation[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [aiConfigured, setAiConfigured] = useState(false);
+  const [aiStatusError, setAiStatusError] = useState("");
   const [aiProvider, setAiProvider] = useState("");
   const [aiModel, setAiModel] = useState("");
   const [assistantMode, setAssistantMode] = useState<AssistantMode>("normal");
@@ -211,22 +212,30 @@ export default function Home() {
         fetch("/api/v1/products", { headers }),
         fetch("/api/v1/locations", { headers }),
         fetch("/api/v1/stock-movements?limit=100", { headers }),
-        fetch("/api/v1/ai/status", { headers }),
+        fetch("/api/v1/ai/status", { headers }).catch(() => null),
       ]);
-      const failed = [productResponse, locationResponse, movementResponse, aiResponse].find((response) => !response.ok);
+      const failed = [productResponse, locationResponse, movementResponse].find((response) => !response.ok);
       if (failed) {
         throw new Error(await apiError(failed, "Could not load products and inventory history."));
       }
       const productData = (await productResponse.json()) as { items: InventoryProduct[] };
       const locationData = (await locationResponse.json()) as { items: InventoryLocation[] };
       const movementData = (await movementResponse.json()) as { items: StockMovement[] };
-      const aiData = (await aiResponse.json()) as { configured: boolean; provider: string | null; model: string | null };
       setProducts(productData.items);
       setLocations(locationData.items);
       setStockMovements(movementData.items);
-      setAiConfigured(aiData.configured);
-      setAiProvider(aiData.provider ?? "");
-      setAiModel(aiData.model ?? "");
+      if (aiResponse?.ok) {
+        const aiData = (await aiResponse.json()) as { configured: boolean; provider: string | null; model: string | null };
+        setAiConfigured(aiData.configured);
+        setAiProvider(aiData.provider ?? "");
+        setAiModel(aiData.model ?? "");
+        setAiStatusError("");
+      } else {
+        setAiConfigured(false);
+        setAiProvider("");
+        setAiModel("");
+        setAiStatusError("AI availability could not be checked. Normal Search remains available.");
+      }
       setStockForm((current) => {
         const selectedProduct = productData.items.find((product) => product.id === current.product_id && product.active)
           ?? productData.items.find((product) => product.active);
@@ -848,8 +857,10 @@ export default function Home() {
         <p className={`ai-status${assistantMode === "ai" && !aiConfigured ? " ai-unavailable" : ""}`} role="status">
           {assistantMode === "normal"
             ? "Normal Search uses deterministic product and alias matching; no AI service is required."
-            : aiConfigured
-              ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Stock facts are still fetched from your inventory.`
+              : aiStatusError
+                ? aiStatusError
+              : aiConfigured
+                ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Stock facts are still fetched from your inventory.`
               : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search."}
         </p>
         <form className="ask-card" onSubmit={submit}>

@@ -9,7 +9,7 @@ from app.formatting import format_quantity_label
 from app.inventory_metrics import is_low_stock
 from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias
-from app.query_understanding import Candidate, Intent, resolve_product, understand_query
+from app.query_understanding import Candidate, Intent, Query, resolve_product, understand_query
 
 
 @dataclass(frozen=True)
@@ -25,8 +25,24 @@ class LookupResult:
     message: str = ""
 
 
-def lookup_product(session: Session, business_id: UUID, text: str) -> LookupResult:
-    query = understand_query(text)
+def lookup_product(
+    session: Session,
+    business_id: UUID,
+    text: str,
+    *,
+    interpreted_intent: Intent | None = None,
+    interpreted_product: str | None = None,
+) -> LookupResult:
+    query = (
+        understand_query(text)
+        if interpreted_intent is None
+        else Query(
+            original=text,
+            normalized="",
+            entity_query=interpreted_product or "",
+            intent=interpreted_intent,
+        )
+    )
     if query.intent == Intent.LOW_STOCK:
         totals = (
             select(
