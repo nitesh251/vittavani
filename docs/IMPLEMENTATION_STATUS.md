@@ -38,7 +38,7 @@ Status reflects code in this repository; “implemented” does not imply produc
 - Damage/expiry, returns, low-stock alert lifecycle, and concurrency verification against PostgreSQL.
 - Sales, idempotency, payments, customer credit ledger, suppliers, and purchases.
 - Real microphone hardware, actual browser permission dialogs, and Hindi/Hinglish recognition accuracy across devices have not been verified.
-- Onboarding, sales, customer udhaar, reports, product/location pagination, and exports.
+- Onboarding, sales, customer udhaar, reports, product/location pagination, and exports. Current product and dashboard reads load the complete configured business dataset, which is suitable for this local foundation but should be paginated for larger tenants.
 - Mutation confirmations for AI-initiated stock writes (AI mode currently only handles read queries), command audit/retention controls.
 - Private file storage, upload validation, data export/deletion workflows, backup/restore verification, CI, and end-to-end browser tests.
 - Production frontend build/deployment and hosting-specific hardening.

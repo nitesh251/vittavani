@@ -73,6 +73,7 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 39px); }
 .inventory-grid .card-heading p, .inventory-products .card-heading p { font-size: 13px; }
 .inventory-form { display: grid; gap: 13px; }
 .inventory-form label { display: grid; gap: 6px; color: #385448; font-size: 12px; font-weight: 600; }
+.form-help { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.4; }
 .inventory-form input, .inventory-form select { width: 100%; min-height: 43px; border: 1px solid #d7e2db; border-radius: 8px; padding: 9px 11px; background: #fff; color: var(--ink); font-size: 14px; }
 .inventory-form input:hover, .inventory-form select:hover { border-color: #abcab6; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

@@ -12,12 +12,8 @@ const endpointMethods = {
 
 function isSameOrigin(request) {
   const origin = request.headers.get("origin");
-  const host = (
-    request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? ""
-  ).split(",")[0].trim().toLowerCase();
-  const protocol = (
-    request.headers.get("x-forwarded-proto") ?? new URL(request.url).protocol
-  ).split(",")[0].trim().replace(/:$/, "");
+  const host = (request.headers.get("host") ?? "").split(",")[0].trim().toLowerCase();
+  const protocol = new URL(request.url).protocol.replace(/:$/, "");
   if (!origin || !host) return false;
   try {
     const originUrl = new URL(origin);

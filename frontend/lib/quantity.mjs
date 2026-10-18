@@ -1,4 +1,8 @@
 export function compareDecimalStrings(left, right) {
+  const decimalPattern = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
+  if (!decimalPattern.test(left) || !decimalPattern.test(right)) {
+    return left.localeCompare(right);
+  }
   const precision = Math.max(left.split(".")[1]?.length ?? 0, right.split(".")[1]?.length ?? 0);
   const scale = BigInt(`1${"0".repeat(precision)}`);
   const toScaledInteger = (value) => {

@@ -726,7 +726,9 @@ export default function Home() {
                 <form className="inventory-form" onSubmit={saveProduct}>
                   <label>Product name<input required maxLength={180} value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} /></label>
                   <div className="form-row">
-                    <label>SKU (optional)<input maxLength={80} value={productForm.sku} onChange={(event) => setProductForm({ ...productForm, sku: event.target.value })} /></label>
+                    <label>SKU (optional)<input maxLength={80} value={productForm.sku} onChange={(event) => setProductForm({ ...productForm, sku: event.target.value })} />
+                      {editingProduct && <small className="form-help">Clear the field to remove the current SKU.</small>}
+                    </label>
                     <label>Unit<input required maxLength={32} value={productForm.unit} onChange={(event) => setProductForm({ ...productForm, unit: event.target.value })} /></label>
                   </div>
                   <div className="form-row">

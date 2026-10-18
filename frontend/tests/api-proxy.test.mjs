@@ -77,6 +77,21 @@ test("rejects cross-origin writes", async () => {
   assert.match((await response.json()).detail, /valid same-origin Origin header/);
 });
 
+test("does not trust client-supplied forwarded host headers for writes", async () => {
+  const response = await proxyApiRequest(
+    request("inventory/receipts", "POST", {
+      origin: "http://forged.local",
+      "x-forwarded-host": "forged.local",
+      "x-forwarded-proto": "http",
+    }),
+    ["inventory", "receipts"],
+    development,
+    fetch,
+  );
+
+  assert.equal(response.status, 403);
+});
+
 test("reports missing server-side development token", async () => {
   const response = await proxyApiRequest(
     request("dashboard"),
