@@ -1,19 +1,34 @@
+const decimalPattern = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/;
+
+function parseDecimal(value) {
+  if (value.length > 128) return null;
+  const match = decimalPattern.exec(value);
+  if (!match) return null;
+
+  const whole = match[2] ?? "0";
+  const fraction = match[3] ?? match[4] ?? "";
+  const exponent = Number(match[5] ?? "0");
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 1000) return null;
+
+  let coefficient = BigInt(`${whole}${fraction}` || "0");
+  let scale = fraction.length - exponent;
+  if (scale < 0) {
+    coefficient *= 10n ** BigInt(-scale);
+    scale = 0;
+  }
+  if (match[1] === "-") coefficient = -coefficient;
+  return { coefficient, scale };
+}
+
 export function compareDecimalStrings(left, right) {
-  const decimalPattern = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
-  if (!decimalPattern.test(left) || !decimalPattern.test(right)) {
+  const leftDecimal = parseDecimal(left);
+  const rightDecimal = parseDecimal(right);
+  if (!leftDecimal || !rightDecimal) {
     return Math.sign(left.localeCompare(right));
   }
-  const precision = Math.max(left.split(".")[1]?.length ?? 0, right.split(".")[1]?.length ?? 0);
-  const scale = BigInt(`1${"0".repeat(precision)}`);
-  const toScaledInteger = (value) => {
-    const negative = value.startsWith("-");
-    const unsigned = value.startsWith("-") || value.startsWith("+") ? value.slice(1) : value;
-    const [whole, fraction = ""] = unsigned.split(".");
-    const fractional = BigInt(fraction.padEnd(precision, "0") || "0");
-    const amount = BigInt(whole || "0") * scale + fractional;
-    return negative ? -amount : amount;
-  };
-  const leftValue = toScaledInteger(left);
-  const rightValue = toScaledInteger(right);
+
+  const scale = Math.max(leftDecimal.scale, rightDecimal.scale);
+  const leftValue = leftDecimal.coefficient * 10n ** BigInt(scale - leftDecimal.scale);
+  const rightValue = rightDecimal.coefficient * 10n ** BigInt(scale - rightDecimal.scale);
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
 }

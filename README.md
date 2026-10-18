@@ -41,7 +41,7 @@ cd frontend
 npm run dev -- --hostname 127.0.0.1
 ```
 
-Keep the development frontend bound to loopback; the development proxy is not a production authentication boundary.
+Keep the development frontend bound to loopback; the development proxy is not a production authentication boundary. The proxy only trusts `http://localhost:3000` and `http://127.0.0.1:3000` Origins by default. For a deliberate local origin change, set `DEV_FRONTEND_ORIGINS` in `frontend/.env.local` to a comma-separated allowlist and restart Next.js; do not expose this development proxy to a network.
 
 Verify the API is running at `http://localhost:8000/health`, then open `http://localhost:3000`; Dashboard and Inventory should load through the same-origin proxy. If authentication still fails, compare the token values locally without printing them and confirm both processes were restarted.
 

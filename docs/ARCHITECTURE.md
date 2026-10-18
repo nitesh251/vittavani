@@ -29,7 +29,7 @@ The Next.js home page combines database-derived catalogue/stock totals, grouped 
 
 In development, the same-origin Next.js API proxy attaches `X-Dev-Token` using the server environment variable `DEV_API_TOKEN`. Do not use a `NEXT_PUBLIC_*` variable for the token; rename any legacy frontend setting to `DEV_API_TOKEN`. The backend's root `.env` remains authoritative for token validation.
 
-The development-token proxy rejects protected API calls outside `next dev`; production use requires a separate production authentication and authorization implementation.
+The development-token proxy rejects protected API calls outside `next dev`; it applies Fetch Metadata and an explicit development frontend Origin allowlist (loopback defaults), and should be bound to loopback. Production use requires a separate authentication and authorization implementation.
 
 ## Deployment and security
 

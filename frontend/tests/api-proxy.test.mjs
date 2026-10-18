@@ -10,9 +10,9 @@ const development = {
 };
 
 function request(path, method = "GET", headers = {}) {
-  return new Request(`http://app.local/api/v1/${path}`, {
+  return new Request(`http://localhost:3000/api/v1/${path}`, {
     method,
-    headers: { host: "app.local", ...headers },
+    headers: { host: "localhost:3000", ...headers },
     ...(method === "POST" || method === "PUT" ? { body: "{}" } : {}),
   });
 }
@@ -74,7 +74,7 @@ test("rejects cross-origin writes", async () => {
   );
 
   assert.equal(response.status, 403);
-  assert.match((await response.json()).detail, /same development origin/);
+  assert.match((await response.json()).detail, /allowed development frontend origin/);
 });
 
 test("rejects cross-site GET requests", async () => {
@@ -132,7 +132,7 @@ test("forwards same-origin requests with the backend token", async () => {
   let forwardedOptions;
   const response = await proxyApiRequest(
     request("inventory/receipts?unexpected=1", "POST", {
-      origin: "http://app.local",
+      origin: "http://localhost:3000",
       "content-type": "application/json",
     }),
     ["inventory", "receipts"],

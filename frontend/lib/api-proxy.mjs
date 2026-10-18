@@ -10,14 +10,15 @@ const endpointMethods = {
   "inventory/transfers": ["POST"],
 };
 
-function isSameOrigin(request) {
+function isAllowedDevOrigin(request, environment) {
   const origin = request.headers.get("origin");
-  const host = (request.headers.get("host") ?? "").split(",")[0].trim().toLowerCase();
-  const protocol = new URL(request.url).protocol.replace(/:$/, "");
-  if (!origin || !host) return false;
+  if (!origin) return false;
+  const allowedOrigins = (
+    environment.DEV_FRONTEND_ORIGINS
+      ?? "http://localhost:3000,http://127.0.0.1:3000"
+  ).split(",").map((value) => value.trim());
   try {
-    const originUrl = new URL(origin);
-    return originUrl.host.toLowerCase() === host && originUrl.protocol.replace(/:$/, "") === protocol;
+    return allowedOrigins.some((allowedOrigin) => new URL(allowedOrigin).origin === new URL(origin).origin);
   } catch {
     return false;
   }
@@ -42,9 +43,9 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
   if (isCrossSiteRequest(request)) {
     return Response.json({ detail: "Cross-site requests are not allowed." }, { status: 403 });
   }
-  if (request.headers.get("origin") && !isSameOrigin(request)) {
+  if (request.headers.get("origin") && !isAllowedDevOrigin(request, environment)) {
     return Response.json(
-      { detail: "Requests with an Origin header must use the same development origin." },
+      { detail: "Requests with an Origin header must use an allowed development frontend origin." },
       { status: 403 },
     );
   }
@@ -71,9 +72,9 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
         { status: 403 },
       );
     }
-    if (!isSameOrigin(request)) {
+    if (!isAllowedDevOrigin(request, environment)) {
       return Response.json(
-        { detail: "Inventory writes require a valid same-origin Origin header." },
+        { detail: "Inventory writes require an allowed development frontend Origin header." },
         { status: 403 },
       );
     }
