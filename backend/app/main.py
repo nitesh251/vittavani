@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.formatting import format_quantity
+from app.formatting import format_quantity, format_quantity_label
 from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
 
@@ -641,11 +641,13 @@ def _product_response(session: Session, business_id: UUID, product: Product) -> 
 
 def _require_active_product(session: Session, business_id: UUID, product_id: UUID) -> Product:
     product = session.scalar(
-        select(Product).where(
+        select(Product)
+        .where(
             Product.business_id == business_id,
             Product.id == product_id,
             Product.active.is_(True),
         )
+        .with_for_update()
     )
     if product is None:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -713,7 +715,7 @@ def receive_stock(
         product_id=product.id,
         quantity=str(total),
         unit=product.unit,
-        message=f"Received {format_quantity(body.quantity)} {product.unit} of {product.name}. Balance at location: {format_quantity(total)} {product.unit}.",
+        message=f"Received {format_quantity_label(body.quantity, product.unit)} of {product.name}. Balance at location: {format_quantity_label(total, product.unit)}.",
     )
 
 
@@ -772,7 +774,7 @@ def adjust_stock(
         product_id=product.id,
         quantity=str(total),
         unit=product.unit,
-        message=f"Adjusted {product.name} by {format_quantity(body.quantity_change)} {product.unit}. Balance at location: {format_quantity(total)} {product.unit}.",
+        message=f"Adjusted {product.name} by {format_quantity_label(abs(body.quantity_change), product.unit)} ({format_quantity(body.quantity_change)}). Balance at location: {format_quantity_label(total, product.unit)}.",
     )
 
 
@@ -846,5 +848,5 @@ def transfer_stock(
         product_id=product.id,
         quantity=str(remaining),
         unit=product.unit,
-        message=f"Moved {format_quantity(body.quantity)} {product.unit} of {product.name}. Balance at source: {format_quantity(remaining)} {product.unit}.",
+        message=f"Moved {format_quantity_label(body.quantity, product.unit)} of {product.name}. Balance at source: {format_quantity_label(remaining, product.unit)}.",
     )

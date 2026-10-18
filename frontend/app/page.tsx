@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { formatQuantity, formatQuantityLabel } from "./formatQuantity";
 
 type Answer = {
   message: string;
@@ -27,6 +28,21 @@ type Dashboard = {
     created_at: string;
   }[];
 };
+
+type InventoryProduct = {
+  id: string;
+  name: string;
+  sku: string | null;
+  unit: string;
+  selling_price: string;
+  minimum_stock: string;
+  active: boolean;
+  aliases: string[];
+  quantity: string;
+  balances: { location_id: string; location_name: string; quantity: string }[];
+};
+
+type InventoryLocation = { id: string; name: string; full_name: string; parent_location_id: string | null };
 
 type SpeechRecognitionAlternative = { transcript: string };
 type SpeechRecognitionResult = ArrayLike<SpeechRecognitionAlternative> & { isFinal: boolean };
@@ -57,10 +73,6 @@ const headers = {
   "Content-Type": "application/json",
   ...(devToken ? { "X-Dev-Token": devToken } : {}),
 };
-
-function formatQuantity(value: string) {
-  return Number(value).toLocaleString("en-IN", { maximumFractionDigits: 3 });
-}
 
 function movementLabel(value: string) {
   return value.replaceAll("_", " ");
@@ -94,6 +106,18 @@ export default function Home() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
+  const [products, setProducts] = useState<InventoryProduct[]>([]);
+  const [locations, setLocations] = useState<InventoryLocation[]>([]);
+  const [inventoryLoading, setInventoryLoading] = useState(true);
+  const [inventoryError, setInventoryError] = useState("");
+  const [inventoryNotice, setInventoryNotice] = useState("");
+  const [inventoryWriteError, setInventoryWriteError] = useState("");
+  const [writing, setWriting] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<string | null>(null);
+  const [productForm, setProductForm] = useState({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "" });
+  const [stockMode, setStockMode] = useState("receipt");
+  const [stockForm, setStockForm] = useState({ product_id: "", location_id: "", source_location_id: "", destination_location_id: "", quantity: "", unit: "", note: "" });
+  const [locationForm, setLocationForm] = useState({ name: "", parent_location_id: "" });
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState("");
   const [speechLanguage, setSpeechLanguage] = useState("hi-IN");
@@ -119,8 +143,40 @@ export default function Home() {
     }
   }, []);
 
+  const loadInventory = useCallback(async () => {
+    setInventoryLoading(true);
+    setInventoryError("");
+    try {
+      const [productResponse, locationResponse] = await Promise.all([
+        fetch(`${apiUrl}/api/v1/products`, { headers }),
+        fetch(`${apiUrl}/api/v1/locations`, { headers }),
+      ]);
+      if (!productResponse.ok || !locationResponse.ok) {
+        const failed = !productResponse.ok ? productResponse : locationResponse;
+        throw new Error(failed.status === 401 ? "Development API token is missing or invalid." : "Could not load products and locations.");
+      }
+      const productData = (await productResponse.json()) as { items: InventoryProduct[] };
+      const locationData = (await locationResponse.json()) as { items: InventoryLocation[] };
+      setProducts(productData.items);
+      setLocations(locationData.items);
+      setStockForm((current) => ({
+        ...current,
+        product_id: current.product_id || productData.items.find((product) => product.active)?.id || "",
+        unit: current.unit || productData.items.find((product) => product.id === current.product_id)?.unit || productData.items.find((product) => product.active)?.unit || "",
+        location_id: current.location_id || locationData.items[0]?.id || "",
+        source_location_id: current.source_location_id || locationData.items[0]?.id || "",
+        destination_location_id: current.destination_location_id || locationData.items.find((location) => location.id !== (current.source_location_id || locationData.items[0]?.id))?.id || "",
+      }));
+    } catch (caught) {
+      setInventoryError(caught instanceof Error ? caught.message : "Could not load inventory.");
+    } finally {
+      setInventoryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadDashboard();
+    void loadInventory();
     setSpeakAnswers(window.localStorage.getItem("vittavani-speak-answers") === "true");
     setSpeechOutputSupported(
       "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined",
@@ -129,7 +185,96 @@ export default function Home() {
       recognitionRef.current?.abort();
       window.speechSynthesis?.cancel();
     };
-  }, [loadDashboard]);
+  }, [loadDashboard, loadInventory]);
+
+  async function writeInventory(path: string, method: "POST" | "PUT", body: object, success: string) {
+    setWriting(true);
+    setInventoryNotice("");
+    setInventoryWriteError("");
+    try {
+      const response = await fetch(`${apiUrl}${path}`, { method, headers, body: JSON.stringify(body) });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(data.detail ?? `Could not save inventory changes (${response.status}).`);
+      }
+      setInventoryNotice(success);
+      await Promise.all([loadDashboard(), loadInventory()]);
+      return true;
+    } catch (caught) {
+      setInventoryWriteError(caught instanceof Error ? caught.message : "Could not save inventory changes.");
+      return false;
+    } finally {
+      setWriting(false);
+    }
+  }
+
+  function saveProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const payload = {
+      name: productForm.name,
+      sku: productForm.sku || null,
+      unit: productForm.unit,
+      selling_price: productForm.selling_price,
+      minimum_stock: productForm.minimum_stock,
+      aliases: productForm.aliases.split(",").map((alias) => alias.trim()).filter(Boolean),
+    };
+    const path = editingProduct ? `/api/v1/products/${editingProduct}` : "/api/v1/products";
+    void writeInventory(path, editingProduct ? "PUT" : "POST", payload, editingProduct ? "Product updated." : "Product created.").then((saved) => {
+      if (saved) {
+        setEditingProduct(null);
+        setProductForm({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "" });
+      }
+    });
+  }
+
+  function editProduct(product: InventoryProduct) {
+    setEditingProduct(product.id);
+    setProductForm({
+      name: product.name,
+      sku: product.sku ?? "",
+      unit: product.unit,
+      selling_price: product.selling_price,
+      minimum_stock: product.minimum_stock,
+      aliases: product.aliases.join(", "),
+    });
+  }
+
+  function saveStock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const shared = { product_id: stockForm.product_id, quantity: stockForm.quantity, unit: stockForm.unit, note: stockForm.note || null };
+    if (stockMode === "receipt") {
+      void writeInventory("/api/v1/inventory/receipts", "POST", { ...shared, location_id: stockForm.location_id }, "Stock received and saved.");
+    } else if (stockMode === "adjustment") {
+      void writeInventory("/api/v1/inventory/adjustments", "POST", {
+        product_id: stockForm.product_id,
+        location_id: stockForm.location_id,
+        quantity_change: stockForm.quantity,
+        unit: stockForm.unit,
+        note: stockForm.note || null,
+      }, "Stock adjustment saved.");
+    } else {
+      void writeInventory("/api/v1/inventory/transfers", "POST", {
+        ...shared,
+        source_location_id: stockForm.source_location_id,
+        destination_location_id: stockForm.destination_location_id,
+      }, "Stock transfer saved.");
+    }
+  }
+
+  function saveLocation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void writeInventory("/api/v1/locations", "POST", {
+      name: locationForm.name,
+      parent_location_id: locationForm.parent_location_id || null,
+    }, "Location created.").then((saved) => {
+      if (saved) setLocationForm({ name: "", parent_location_id: "" });
+    });
+  }
+
+  function selectStockProduct(productId: string) {
+    const product = products.find((item) => item.id === productId);
+    setStockForm((current) => ({ ...current, product_id: productId, unit: product?.unit ?? "" }));
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -247,6 +392,7 @@ export default function Home() {
         </a>
         <nav className="main-nav" aria-label="Main navigation">
           <a href="#dashboard">Dashboard</a>
+          <a href="#inventory">Inventory</a>
           <a href="#ask">Ask Vittavani</a>
         </nav>
         <span className="company">A product of Vinayaka Services</span>
@@ -264,7 +410,11 @@ export default function Home() {
           </button>
         </div>
 
-        {dashboardLoading && <p className="dashboard-state" role="status">Loading your inventory…</p>}
+        {dashboardLoading && (
+          <div className="loading-grid" role="status" aria-label="Loading inventory dashboard">
+            {Array.from({ length: 4 }, (_, index) => <span className="skeleton" key={index} />)}
+          </div>
+        )}
         {dashboardError && (
           <div className="dashboard-state state-error" role="alert">
             <span>{dashboardError}</span>
@@ -285,14 +435,14 @@ export default function Home() {
                 label="Stock on hand"
                 value={
                   dashboard.stock_by_unit.length === 1
-                    ? `${formatQuantity(dashboard.stock_by_unit[0].quantity)} ${dashboard.stock_by_unit[0].unit}`
+                    ? formatQuantityLabel(dashboard.stock_by_unit[0].quantity, dashboard.stock_by_unit[0].unit)
                     : dashboard.stock_by_unit.length > 1
                       ? "Mixed units"
                       : "0"
                 }
                 detail={
                   dashboard.stock_by_unit.length > 1
-                    ? `${dashboard.stock_by_unit.map((stock) => `${formatQuantity(stock.quantity)} ${stock.unit}`).join(" · ")} — units kept separate`
+                    ? `${dashboard.stock_by_unit.map((stock) => formatQuantityLabel(stock.quantity, stock.unit)).join(" · ")} — units kept separate`
                     : dashboard.stock_by_unit.length === 1
                       ? "On hand across recorded locations"
                       : "No stock currently recorded"
@@ -326,8 +476,8 @@ export default function Home() {
                   <ul className="data-list">
                     {dashboard.low_stock_products.map((product) => (
                       <li key={product.id}>
-                        <span><strong>{product.name}</strong><small>Minimum {formatQuantity(product.minimum_stock)} {product.unit}</small></span>
-                        <span className="stock-quantity">{formatQuantity(product.quantity)} {product.unit}</span>
+                        <span><strong>{product.name}</strong><small>Minimum {formatQuantityLabel(product.minimum_stock, product.unit)}</small></span>
+                        <span className="stock-quantity">{formatQuantityLabel(product.quantity, product.unit)}</span>
                       </li>
                     ))}
                   </ul>
@@ -347,7 +497,7 @@ export default function Home() {
                     {dashboard.stock_by_location.map((location) => (
                       <li key={location.name}>
                         <span><strong>{location.name}</strong><small>{location.product_count} {location.product_count === 1 ? "product" : "products"}</small></span>
-                        <span className="stock-quantity">{location.stock_by_unit.map((stock) => `${formatQuantity(stock.quantity)} ${stock.unit}`).join(" · ") || "0 units"}</span>
+                        <span className="stock-quantity">{location.stock_by_unit.map((stock) => formatQuantityLabel(stock.quantity, stock.unit)).join(" · ") || "0 units"}</span>
                       </li>
                     ))}
                   </ul>
@@ -374,7 +524,143 @@ export default function Home() {
                           {movement.destination_location ?? movement.source_location ?? "Location not recorded"}
                         </small>
                       </span>
-                      <span className="stock-quantity">{formatQuantity(movement.quantity)} {movement.unit}</span>
+                      <span className="stock-quantity">{formatQuantityLabel(movement.quantity, movement.unit)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </>
+        )}
+      </section>
+
+      <section className="inventory-section" id="inventory" aria-labelledby="inventory-title">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">PRODUCTS AND STOCK CONTROL</p>
+            <h2 id="inventory-title">Inventory</h2>
+            <p className="intro">Manage catalogue details and record stock changes against saved locations.</p>
+          </div>
+          <button className="refresh-button" type="button" onClick={() => void loadInventory()} disabled={inventoryLoading}>
+            {inventoryLoading ? "Loading…" : "↻ Refresh"}
+          </button>
+        </div>
+        {inventoryLoading && (
+          <div className="inventory-loading" role="status" aria-label="Loading products and locations">
+            <span className="skeleton" /><span className="skeleton" />
+          </div>
+        )}
+        {inventoryError && (
+          <div className="dashboard-state state-error" role="alert">
+            <span>{inventoryError}</span>
+            <button className="text-button" type="button" onClick={() => void loadInventory()}>Try again</button>
+          </div>
+        )}
+        {inventoryNotice && <p className="inventory-notice" role="status">{inventoryNotice}</p>}
+        {inventoryWriteError && <p className="notice error" role="alert">{inventoryWriteError}</p>}
+        {!inventoryLoading && !inventoryError && (
+          <>
+            <div className="inventory-grid">
+              <section className="data-card" aria-labelledby="product-form-title">
+                <div className="card-heading">
+                  <div>
+                    <h3 id="product-form-title">{editingProduct ? "Edit product" : "Add a product"}</h3>
+                    <p>Product details and low-stock threshold</p>
+                  </div>
+                </div>
+                <form className="inventory-form" onSubmit={saveProduct}>
+                  <label>Product name<input required maxLength={180} value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} /></label>
+                  <div className="form-row">
+                    <label>SKU (optional)<input maxLength={80} value={productForm.sku} onChange={(event) => setProductForm({ ...productForm, sku: event.target.value })} /></label>
+                    <label>Unit<input required maxLength={32} value={productForm.unit} onChange={(event) => setProductForm({ ...productForm, unit: event.target.value })} /></label>
+                  </div>
+                  <div className="form-row">
+                    <label>Selling price (₹)<input type="number" min="0" step="0.01" required value={productForm.selling_price} onChange={(event) => setProductForm({ ...productForm, selling_price: event.target.value })} /></label>
+                    <label>Minimum stock<input type="number" min="0" step="0.001" required value={productForm.minimum_stock} onChange={(event) => setProductForm({ ...productForm, minimum_stock: event.target.value })} /></label>
+                  </div>
+                  <label>Search aliases (comma-separated)<input value={productForm.aliases} onChange={(event) => setProductForm({ ...productForm, aliases: event.target.value })} placeholder="Hindi, Hinglish, or alternate names" /></label>
+                  <div className="form-actions">
+                    <button className="submit" type="submit" disabled={writing}>{writing ? "Saving…" : editingProduct ? "Save product" : "Add product"}</button>
+                    {editingProduct && <button className="refresh-button" type="button" onClick={() => { setEditingProduct(null); setProductForm({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "" }); }}>Cancel</button>}
+                  </div>
+                </form>
+              </section>
+
+              <section className="data-card" aria-labelledby="stock-form-title">
+                <div className="card-heading">
+                  <div>
+                    <h3 id="stock-form-title">Record stock</h3>
+                    <p>Changes are saved with a stock movement record.</p>
+                  </div>
+                </div>
+                {products.filter((product) => product.active).length === 0 || locations.length === 0 ? (
+                  <p className="card-empty">Add an active product and a storage location before recording stock changes.</p>
+                ) : (
+                  <form className="inventory-form" onSubmit={saveStock}>
+                    <label>Action<select value={stockMode} onChange={(event) => setStockMode(event.target.value)}>
+                      <option value="receipt">Receive stock</option>
+                      <option value="adjustment">Adjust stock</option>
+                      <option value="transfer">Transfer between locations</option>
+                    </select></label>
+                    <label>Product<select required value={stockForm.product_id} onChange={(event) => selectStockProduct(event.target.value)}>
+                      {products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name} ({product.unit})</option>)}
+                    </select></label>
+                    {stockMode === "transfer" ? (
+                      <div className="form-row">
+                        <label>From<select required value={stockForm.source_location_id} onChange={(event) => setStockForm({ ...stockForm, source_location_id: event.target.value })}>
+                          {locations.map((location) => <option key={location.id} value={location.id}>{location.full_name}</option>)}
+                        </select></label>
+                        <label>To<select required value={stockForm.destination_location_id} onChange={(event) => setStockForm({ ...stockForm, destination_location_id: event.target.value })}>
+                          {locations.map((location) => <option key={location.id} value={location.id}>{location.full_name}</option>)}
+                        </select></label>
+                      </div>
+                    ) : (
+                      <label>Location<select required value={stockForm.location_id} onChange={(event) => setStockForm({ ...stockForm, location_id: event.target.value })}>
+                        {locations.map((location) => <option key={location.id} value={location.id}>{location.full_name}</option>)}
+                      </select></label>
+                    )}
+                    <label>{stockMode === "adjustment" ? "Quantity change (negative to reduce)" : `Quantity (${stockForm.unit || "unit"})`}
+                      <input type="number" step="0.001" required value={stockForm.quantity} onChange={(event) => setStockForm({ ...stockForm, quantity: event.target.value })} placeholder={stockMode === "adjustment" ? "-2 or 2" : "0"} />
+                    </label>
+                    <label>Note (optional)<input maxLength={500} value={stockForm.note} onChange={(event) => setStockForm({ ...stockForm, note: event.target.value })} /></label>
+                    <div className="form-actions"><button className="submit" type="submit" disabled={writing || !stockForm.product_id || !stockForm.location_id}>{writing ? "Saving…" : "Save stock change"}</button></div>
+                  </form>
+                )}
+              </section>
+
+              <section className="data-card location-form-card" aria-labelledby="location-form-title">
+                <div className="card-heading">
+                  <div>
+                    <h3 id="location-form-title">Add a storage location</h3>
+                    <p>Build a location hierarchy, such as Storeroom → Rack → Shelf.</p>
+                  </div>
+                </div>
+                <form className="inventory-form location-form" onSubmit={saveLocation}>
+                  <label>Location name<input required maxLength={120} value={locationForm.name} onChange={(event) => setLocationForm({ ...locationForm, name: event.target.value })} /></label>
+                  <label>Parent location (optional)<select value={locationForm.parent_location_id} onChange={(event) => setLocationForm({ ...locationForm, parent_location_id: event.target.value })}>
+                    <option value="">Top-level location</option>
+                    {locations.map((location) => <option key={location.id} value={location.id}>{location.full_name}</option>)}
+                  </select></label>
+                  <div className="form-actions"><button className="refresh-button" type="submit" disabled={writing}>{writing ? "Saving…" : "Add location"}</button></div>
+                </form>
+              </section>
+            </div>
+
+            <section className="data-card inventory-products" aria-labelledby="inventory-products-title">
+              <div className="card-heading">
+                <div><h3 id="inventory-products-title">Product balances</h3><p>Persisted balances grouped by product and location</p></div>
+                <span className="count-pill">{products.length}</span>
+              </div>
+              {products.length === 0 ? <p className="card-empty">No products yet. Add a product above to begin building your catalogue.</p> : (
+                <ul className="data-list product-list">
+                  {products.map((product) => (
+                    <li key={product.id}>
+                      <span>
+                        <strong>{product.name}{!product.active && <span className="movement-type"> · inactive</span>}</strong>
+                        <small>{product.sku ? `SKU ${product.sku} · ` : ""}Minimum {formatQuantityLabel(product.minimum_stock, product.unit)} · {product.balances.length ? product.balances.map((balance) => `${balance.location_name}: ${formatQuantity(balance.quantity)}`).join(" · ") : "No location balance"} </small>
+                      </span>
+                      <span className="product-total">{formatQuantityLabel(product.quantity, product.unit)}</span>
+                      <button className="text-button" type="button" onClick={() => editProduct(product)}>Edit</button>
                     </li>
                   ))}
                 </ul>

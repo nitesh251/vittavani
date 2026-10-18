@@ -1,13 +1,15 @@
 from decimal import Decimal
+import sqlite3
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
+from app.formatting import format_quantity, format_quantity_label
 from app.main import app
 from app.models import Business, InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
@@ -124,6 +126,7 @@ def test_product_location_includes_nested_path(session):
     result = lookup_product(session, BUSINESS_ID, "Where is Amul Butter?")
 
     assert "Storeroom > Rack B > Shelf 2" in result.message
+    assert "20 packets" in result.message
     assert "Other shop" not in result.message
 
 
@@ -181,8 +184,29 @@ def test_low_stock_lookup_uses_configured_business_threshold(session):
 
     result = lookup_product(session, BUSINESS_ID, "Show low stock items.")
 
-    assert result.candidates == ("Milk (2.000 packet)",)
+    assert result.candidates == ("Milk (2 packets)",)
     assert "Amul Butter" not in result.message
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (Decimal("20"), "20"),
+        (Decimal("20.000"), "20"),
+        (Decimal("0"), "0"),
+        (Decimal("0.125"), "0.125"),
+        (Decimal("100000000000000000000000.125"), "100000000000000000000000.125"),
+        (Decimal("-0.500"), "-0.5"),
+    ],
+)
+def test_quantity_formatter_is_exact_and_never_uses_exponents(value, expected):
+    assert format_quantity(value) == expected
+
+
+def test_quantity_label_pluralizes_common_units():
+    assert format_quantity_label(Decimal("20.000"), "packet") == "20 packets"
+    assert format_quantity_label(Decimal("1.000"), "packets") == "1 packet"
+    assert format_quantity_label(Decimal("1.5"), "kg") == "1.5 kg"
 
 
 def test_http_lookup_requires_configured_development_token(client):
@@ -368,6 +392,158 @@ def test_receipt_and_transfer_update_balances_and_append_movements(client, sessi
             StockMovement.product_id == UUID(product.json()["id"]),
         )
     ) == 3
+
+
+def test_product_create_update_and_inventory_reads_are_persisted_and_tenant_scoped(client):
+    headers = {"X-Dev-Token": "local-test-token"}
+    created = client.post(
+        "/api/v1/products",
+        headers=headers,
+        json={"name": "Fresh Rice", "sku": "R-10", "unit": "bag", "minimum_stock": "2", "aliases": ["chawal"]},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    updated = client.put(
+        f"/api/v1/products/{product_id}",
+        headers=headers,
+        json={"name": "Basmati Rice", "selling_price": "56.00", "minimum_stock": "3", "aliases": ["चावल"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Basmati Rice"
+    assert updated.json()["selling_price"] == "56.00"
+    assert updated.json()["minimum_stock"] == "3.000"
+    assert updated.json()["aliases"] == ["चावल"]
+
+    products = client.get("/api/v1/products", headers=headers)
+    locations = client.get("/api/v1/locations", headers=headers)
+    assert products.status_code == locations.status_code == 200
+    assert [item["name"] for item in products.json()["items"]] == ["Amul Butter", "Basmati Rice"]
+    assert all(item["name"] != "Other Butter" for item in products.json()["items"])
+    assert {item["full_name"] for item in locations.json()["items"]} == {
+        "Storeroom",
+        "Storeroom > Rack B",
+        "Storeroom > Rack B > Shelf 2",
+    }
+
+
+def test_stock_receipt_adjustments_and_transfer_preserve_total_and_record_movements(client, session):
+    headers = {"X-Dev-Token": "local-test-token"}
+    product_id = "00000000-0000-0000-0000-000000000020"
+    shelf_id = "00000000-0000-0000-0000-000000000012"
+    storeroom_id = "00000000-0000-0000-0000-000000000010"
+    receipt = client.post(
+        "/api/v1/inventory/receipts",
+        headers=headers,
+        json={"product_id": product_id, "location_id": shelf_id, "quantity": "5", "unit": "packet"},
+    )
+    assert receipt.status_code == 201
+    assert "25 packets" in receipt.json()["message"]
+
+    adjustment_up = client.post(
+        "/api/v1/inventory/adjustments",
+        headers=headers,
+        json={"product_id": product_id, "location_id": shelf_id, "quantity_change": "2", "unit": "packet"},
+    )
+    adjustment_down = client.post(
+        "/api/v1/inventory/adjustments",
+        headers=headers,
+        json={"product_id": product_id, "location_id": shelf_id, "quantity_change": "-4", "unit": "packet"},
+    )
+    assert adjustment_up.status_code == adjustment_down.status_code == 200
+    assert adjustment_down.json()["quantity"] == "23.000"
+    assert "23 packets" in adjustment_down.json()["message"]
+
+    transfer = client.post(
+        "/api/v1/inventory/transfers",
+        headers=headers,
+        json={
+            "product_id": product_id,
+            "source_location_id": shelf_id,
+            "destination_location_id": storeroom_id,
+            "quantity": "2",
+            "unit": "packet",
+        },
+    )
+    assert transfer.status_code == 200
+    assert transfer.json()["quantity"] == "21.000"
+    inventory = client.get("/api/v1/products", headers=headers).json()["items"][0]
+    assert inventory["quantity"] == "26.000"
+    assert {item["location_id"]: item["quantity"] for item in inventory["balances"]} == {
+        shelf_id: "21.000",
+        storeroom_id: "5.000",
+    }
+    assert session.scalar(select(func.count(StockMovement.id))) == 5
+
+
+def test_invalid_adjustment_location_unit_and_negative_balance_are_rejected(client, session):
+    headers = {"X-Dev-Token": "local-test-token"}
+    payload = {
+        "product_id": "00000000-0000-0000-0000-000000000020",
+        "location_id": "00000000-0000-0000-0000-000000000012",
+        "quantity_change": "-21",
+    }
+    too_much = client.post("/api/v1/inventory/adjustments", headers=headers, json=payload)
+    wrong_unit = client.post(
+        "/api/v1/inventory/adjustments",
+        headers=headers,
+        json={**payload, "quantity_change": "1", "unit": "kg"},
+    )
+    unknown_location = client.post(
+        "/api/v1/inventory/adjustments",
+        headers=headers,
+        json={**payload, "location_id": "00000000-0000-0000-0000-000000000099", "quantity_change": "1"},
+    )
+    other_business = client.post(
+        "/api/v1/inventory/adjustments",
+        headers=headers,
+        json={**payload, "product_id": "00000000-0000-0000-0000-000000000021", "quantity_change": "1"},
+    )
+    assert too_much.status_code == 409
+    assert wrong_unit.status_code == 422
+    assert unknown_location.status_code == 404
+    assert other_business.status_code == 404
+    assert session.scalar(select(func.count(StockMovement.id))) == 0
+
+
+def test_receipt_rolls_back_balance_when_movement_persistence_fails(client, session):
+    engine = session.get_bind()
+
+    def fail_movement_insert(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("INSERT INTO STOCK_MOVEMENTS"):
+            raise sqlite3.IntegrityError("forced stock movement write failure")
+
+    event.listen(engine, "before_cursor_execute", fail_movement_insert)
+    try:
+        response = client.post(
+            "/api/v1/inventory/receipts",
+            headers={"X-Dev-Token": "local-test-token"},
+            json={
+                "product_id": "00000000-0000-0000-0000-000000000020",
+                "location_id": "00000000-0000-0000-0000-000000000012",
+                "quantity": "5",
+            },
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", fail_movement_insert)
+
+    assert response.status_code == 409
+    assert session.scalar(
+        select(InventoryBalance.quantity).where(
+            InventoryBalance.business_id == BUSINESS_ID,
+            InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+            InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000012"),
+        )
+    ) == Decimal("20.000")
+    assert session.scalar(select(func.count(StockMovement.id))) == 0
+
+
+def test_product_unit_cannot_change_after_stock_exists(client):
+    response = client.put(
+        "/api/v1/products/00000000-0000-0000-0000-000000000020",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"unit": "kg"},
+    )
+    assert response.status_code == 409
 
 
 def test_insufficient_transfer_rolls_back_without_movement(client, session):
