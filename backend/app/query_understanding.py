@@ -111,8 +111,6 @@ def understand_query(text: str) -> Query:
         intent = Intent.STOCK
     elif any(normalize_text(phrase) in normalized for phrase in _SEARCH_PHRASES):
         intent = Intent.PRODUCT_SEARCH
-    else:
-        intent = Intent.UNKNOWN
 
     entity = normalized
     for phrase in _ALL_PHRASES:

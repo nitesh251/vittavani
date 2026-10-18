@@ -12,7 +12,7 @@ Vittavani uses a small modular monolith: a Next.js/TypeScript web client calls a
 - `backend/app/query_service.py`: database-backed product lookup and answer construction.
 - `backend/alembic/`: versioned database schema changes.
 
-Every business-owned model carries a `business_id`; foreign keys and compound uniqueness constraints keep associations within a business. Database lookups must always include the authenticated business scope. The initial development-token seam is not production authentication; protected development API routes are disabled outside development mode.
+Every business-owned model carries a `business_id`; foreign keys and compound uniqueness constraints keep associations within a business. Database lookups must always include the authorized business scope. The initial development-token seam is not production authentication; protected development API routes are disabled outside development mode.
 
 ## Query path
 

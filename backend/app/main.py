@@ -1,3 +1,4 @@
+import secrets
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -40,10 +41,10 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def development_business_id(authorization: str | None = Header(default=None)) -> UUID:
+def development_business_id(dev_token: str | None = Header(default=None, alias="X-Dev-Token")) -> UUID:
     if settings.app_env != "development" or not settings.dev_api_token or not settings.dev_business_id:
         raise HTTPException(status_code=503, detail="Protected API is not configured")
-    if authorization != f"******":
+    if dev_token is None or not secrets.compare_digest(dev_token, settings.dev_api_token):
         raise HTTPException(status_code=401, detail="Authentication required")
     try:
         return UUID(settings.dev_business_id)

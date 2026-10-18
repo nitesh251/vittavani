@@ -28,7 +28,7 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
           ...(process.env.NEXT_PUBLIC_DEV_API_TOKEN
-            ? { Authorization: `****** }
+            ? { "X-Dev-Token": process.env.NEXT_PUBLIC_DEV_API_TOKEN }
             : {}),
         },
         body: JSON.stringify({ query }),

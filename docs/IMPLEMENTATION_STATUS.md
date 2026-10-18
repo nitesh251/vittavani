@@ -13,7 +13,7 @@ Status reflects code in this repository; “implemented” does not imply produc
 
 ## Partially implemented
 
-- **Tenant isolation:** schema and lookup service scope data by business; the HTTP development token maps to one configured business. This is not user authentication, role-based authorization, or production-grade isolation.
+- **Tenant isolation:** schema and lookup service scope data by business; the development-only token maps to one configured business. This is not user authentication, role-based authorization, or production-grade isolation.
 - **Migrations:** an initial migration exists and can be run with Alembic; migration execution against a live PostgreSQL service has not been verified in this environment.
 - **Local run/deploy setup:** Docker Compose and environment examples support local setup, but managed-service deployment is not performed or verified.
 
@@ -29,7 +29,7 @@ Status reflects code in this repository; “implemented” does not imply produc
 
 ## Security limitations
 
-All non-health API routes require the explicit development bearer token and are rejected unless `APP_ENV=development`. This token is a single-business local-development convenience only; it must not be used for production. No user authentication, role system, CSRF protection, rate limiting, or production CORS policy is delivered yet. Do not expose this app to production traffic until these controls and tenant-isolation tests are implemented.
+All non-health API routes require the explicit development token in the `X-Dev-Token` header and are rejected unless `APP_ENV=development`. This token is a single-business local-development convenience only; it must not be used for production. No user authentication, role system, CSRF protection, rate limiting, or production CORS policy is delivered yet. Do not expose this app to production traffic until these controls and tenant-isolation tests are implemented.
 
 ## Environment and local commands
 

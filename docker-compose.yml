@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: vittavani
       POSTGRES_USER: vittavani
-      POSTGRES_PASSWORD: vittavani
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5432:5432"
     volumes:

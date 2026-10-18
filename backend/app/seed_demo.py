@@ -2,7 +2,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from app.config import settings
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal
 from app.models import Business, InventoryBalance, Location, Product, ProductAlias
 
 
@@ -12,7 +12,6 @@ def main() -> None:
     if not settings.dev_business_id:
         raise SystemExit("Set DEV_BUSINESS_ID before running the development seed command.")
     business_id = UUID(settings.dev_business_id)
-    Base.metadata.create_all(engine)
     with SessionLocal.begin() as session:
         if session.get(Business, business_id) is not None:
             raise SystemExit("The configured development business already exists; refusing to overwrite it.")
@@ -43,13 +42,17 @@ def main() -> None:
             unit="packet",
             selling_price=Decimal("56.00"),
         )
+        session.add(business)
+        session.flush()
+        session.add(storeroom)
+        session.flush()
+        session.add(rack)
+        session.flush()
+        session.add(shelf)
+        session.add(butter)
+        session.flush()
         session.add_all(
             [
-                business,
-                storeroom,
-                rack,
-                shelf,
-                butter,
                 ProductAlias(business_id=business_id, product_id=butter.id, alias="अमूल बटर"),
                 ProductAlias(business_id=business_id, product_id=butter.id, alias="Amul makhan"),
                 InventoryBalance(

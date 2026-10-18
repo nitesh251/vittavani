@@ -135,10 +135,36 @@ def test_ambiguous_close_matches_return_candidates(session):
     )
     session.commit()
 
-    result = lookup_product(session, BUSINESS_ID, "Amul Buter")
+    result = lookup_product(session, BUSINESS_ID, "Where is Amul Buter?")
 
     assert result.clarification_required
     assert set(result.candidates) == {"Amul Butter", "Amul Butters"}
+
+
+def test_low_stock_lookup_uses_configured_business_threshold(session):
+    milk = Product(
+        id=UUID("00000000-0000-0000-0000-000000000060"),
+        business_id=BUSINESS_ID,
+        name="Milk",
+        unit="packet",
+        minimum_stock=Decimal("5"),
+    )
+    session.add(milk)
+    session.flush()
+    session.add(
+        InventoryBalance(
+            business_id=BUSINESS_ID,
+            product_id=milk.id,
+            location_id=UUID("00000000-0000-0000-0000-000000000010"),
+            quantity=Decimal("2"),
+        )
+    )
+    session.commit()
+
+    result = lookup_product(session, BUSINESS_ID, "Show low stock items.")
+
+    assert result.candidates == ("Milk (2.000 packet)",)
+    assert "Amul Butter" not in result.message
 
 
 def test_http_lookup_requires_configured_development_token(session, monkeypatch):
@@ -155,7 +181,7 @@ def test_http_lookup_requires_configured_development_token(session, monkeypatch)
         assert client.post("/api/v1/ask", json={"query": "Where is Amul Butter?"}).status_code == 401
         response = client.post(
             "/api/v1/ask",
-            headers={"Authorization": "******"},
+            headers={"X-Dev-Token": "local-test-token"},
             json={"query": "Where is Amul Butter?"},
         )
     finally:
