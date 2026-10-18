@@ -47,7 +47,10 @@ async function forward(request: NextRequest, context: RouteContext) {
   }
   if (request.method === "POST" || request.method === "PUT") {
     if (!isSameOrigin(request)) {
-      return Response.json({ detail: "Cross-origin inventory writes are not allowed" }, { status: 403 });
+      return Response.json(
+        { detail: "Inventory writes require a valid same-origin Origin header." },
+        { status: 403 },
+      );
     }
   }
 

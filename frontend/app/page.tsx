@@ -486,7 +486,6 @@ export default function Home() {
         product.sku ?? "",
         ...product.aliases,
       ].some((value) => value.toLocaleLowerCase().includes(search));
-      const quantity = Number(product.quantity);
       const matchesStatus = productStatusFilter === "all"
         || product.stock_status === productStatusFilter.replaceAll("-", "_");
       return matchesSearch && matchesStatus;

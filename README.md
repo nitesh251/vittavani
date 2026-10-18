@@ -22,6 +22,8 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 
 Run backend tests using `pytest` from `backend/`. Check frontend types with `npm run lint` and make a production build with `npm run build` from `frontend/`.
 
+The frontend's npm override keeps the dependency tree on PostCSS 8.5.23 rather than Next.js's older exact transitive declaration; retain the override and lockfile together when updating frontend dependencies.
+
 ### Authentication and restart guidance
 
 The API reads `DEV_API_TOKEN` and `DEV_BUSINESS_ID` from the repository-root `.env`. The Next.js server-side proxy reads `DEV_API_TOKEN` from `frontend/.env.local`; the values must match. Rename any existing `NEXT_PUBLIC_DEV_API_TOKEN` entry to `DEV_API_TOKEN` in that file. The browser sends requests only to the same-origin `/api/v1/` route, and the proxy forwards the credential as the backend's `X-Dev-Token` header. Never include the token in source code, browser code, logs, or documentation.
