@@ -170,7 +170,14 @@ def test_low_stock_lookup_uses_configured_business_threshold(session):
         unit="packet",
         minimum_stock=Decimal("5"),
     )
-    session.add(milk)
+    out_of_stock = Product(
+        id=UUID("00000000-0000-0000-0000-000000000072"),
+        business_id=BUSINESS_ID,
+        name="Bread",
+        unit="loaf",
+        minimum_stock=Decimal("3"),
+    )
+    session.add_all([milk, out_of_stock])
     session.flush()
     session.add(
         InventoryBalance(
@@ -186,6 +193,23 @@ def test_low_stock_lookup_uses_configured_business_threshold(session):
 
     assert result.candidates == ("Milk (2 packets)",)
     assert "Amul Butter" not in result.message
+
+
+def test_out_of_stock_product_is_reported_separately_from_low_stock(session):
+    rice = Product(
+        id=UUID("00000000-0000-0000-0000-000000000061"),
+        business_id=BUSINESS_ID,
+        name="Rice",
+        unit="bag",
+        minimum_stock=Decimal("5"),
+    )
+    session.add(rice)
+    session.commit()
+
+    result = lookup_product(session, BUSINESS_ID, "Show low stock items.")
+
+    assert result.candidates == ()
+    assert "Rice" not in result.message
 
 
 @pytest.mark.parametrize(
@@ -250,7 +274,14 @@ def test_dashboard_reports_low_stock_and_recent_activity(client, session):
         unit="packet",
         minimum_stock=Decimal("5"),
     )
-    session.add(milk)
+    out_of_stock = Product(
+        id=UUID("00000000-0000-0000-0000-000000000073"),
+        business_id=BUSINESS_ID,
+        name="Bread",
+        unit="loaf",
+        minimum_stock=Decimal("3"),
+    )
+    session.add_all([milk, out_of_stock])
     session.flush()
     session.add_all(
         [
@@ -277,6 +308,7 @@ def test_dashboard_reports_low_stock_and_recent_activity(client, session):
     assert response.status_code == 200
     data = response.json()
     assert data["low_stock_count"] == 1
+    assert data["out_of_stock_count"] == 1
     assert data["low_stock_products"][0]["name"] == "Milk"
     assert data["low_stock_products"][0]["quantity"] == "2.000"
     assert data["recent_stock_activity"][0]["product_name"] == "Milk"
@@ -413,6 +445,12 @@ def test_product_create_update_and_inventory_reads_are_persisted_and_tenant_scop
     assert updated.json()["selling_price"] == "56.00"
     assert format_quantity(Decimal(updated.json()["minimum_stock"])) == "3"
     assert updated.json()["aliases"] == ["चावल"]
+    same_alias_update = client.put(
+        f"/api/v1/products/{product_id}",
+        headers=headers,
+        json={"aliases": ["चावल"]},
+    )
+    assert same_alias_update.status_code == 200
 
     products = client.get("/api/v1/products", headers=headers)
     locations = client.get("/api/v1/locations", headers=headers)

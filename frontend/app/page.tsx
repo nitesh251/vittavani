@@ -17,8 +17,9 @@ type Dashboard = {
   low_stock_count: number;
   out_of_stock_count: number;
   low_stock_products: { id: string; name: string; quantity: string; unit: string; minimum_stock: string }[];
-  stock_by_location: { name: string; product_count: number; stock_by_unit: { unit: string; quantity: string }[] }[];
+  stock_by_location: { id: string; name: string; product_count: number; stock_by_unit: { unit: string; quantity: string }[] }[];
   recent_stock_activity: {
+    id: string;
     movement_type: string;
     product_name: string;
     quantity: string;
@@ -76,6 +77,24 @@ const headers = {
 
 function movementLabel(value: string) {
   return value.replaceAll("_", " ");
+}
+
+function productBalanceSummary(product: InventoryProduct) {
+  return product.balances.length
+    ? product.balances
+        .map((balance) => `${balance.location_name}: ${formatQuantity(balance.quantity)}`)
+        .join(" · ")
+    : "No location balance";
+}
+
+function productDetails(product: InventoryProduct) {
+  const sku = product.sku ? `SKU ${product.sku}` : "";
+  return [
+    sku,
+    `Selling price ₹${product.selling_price}`,
+    `Minimum ${formatQuantityLabel(product.minimum_stock, product.unit)}`,
+    productBalanceSummary(product),
+  ].filter(Boolean).join(" · ");
 }
 
 function Metric({
@@ -456,7 +475,7 @@ export default function Home() {
               <Metric
                 label="Low stock"
                 value={String(dashboard.low_stock_count)}
-                detail="At or below configured minimum"
+                detail="In-stock products at/below configured minimum"
                 warning={dashboard.low_stock_count > 0}
               />
               <Metric
@@ -471,7 +490,7 @@ export default function Home() {
                 <div className="card-heading">
                   <div>
                     <h2 id="low-stock-title">Stock alerts</h2>
-                    <p>Products at or below their set minimum</p>
+                    <p>In-stock products at or below their set minimum</p>
                   </div>
                   <span className="count-pill">{dashboard.low_stock_count}</span>
                 </div>
@@ -500,7 +519,7 @@ export default function Home() {
                 ) : (
                   <ul className="data-list">
                     {dashboard.stock_by_location.map((location) => (
-                      <li key={location.name}>
+                      <li key={location.id}>
                         <span><strong>{location.name}</strong><small>{location.product_count} {location.product_count === 1 ? "product" : "products"}</small></span>
                         <span className="stock-quantity">{location.stock_by_unit.map((stock) => formatQuantityLabel(stock.quantity, stock.unit)).join(" · ") || "0 units"}</span>
                       </li>
@@ -520,8 +539,8 @@ export default function Home() {
                 <p className="card-empty">Stock activity will appear here when receipts or transfers are recorded.</p>
               ) : (
                 <ul className="data-list activity-list">
-                  {dashboard.recent_stock_activity.map((movement, index) => (
-                    <li key={`${movement.created_at}-${index}`}>
+                  {dashboard.recent_stock_activity.map((movement) => (
+                    <li key={movement.id}>
                       <span>
                         <strong>{movement.product_name} <span className="movement-type">{movementLabel(movement.movement_type)}</span></strong>
                         <small>
@@ -662,7 +681,7 @@ export default function Home() {
                     <li key={product.id}>
                       <span>
                         <strong>{product.name}{!product.active && <span className="movement-type"> · inactive</span>}</strong>
-                        <small>{product.sku ? `SKU ${product.sku} · ` : ""}Selling price ₹{product.selling_price} · Minimum {formatQuantityLabel(product.minimum_stock, product.unit)} · {product.balances.length ? product.balances.map((balance) => `${balance.location_name}: ${formatQuantity(balance.quantity)}`).join(" · ") : "No location balance"} </small>
+                        <small>{productDetails(product)}</small>
                       </span>
                       <span className="product-total">{formatQuantityLabel(product.quantity, product.unit)}</span>
                       <button className="text-button" type="button" onClick={() => editProduct(product)}>Edit</button>

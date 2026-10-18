@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.formatting import format_quantity, format_quantity_label
+from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
 
@@ -159,12 +160,14 @@ class DashboardUnitTotal(BaseModel):
 
 
 class DashboardLocation(BaseModel):
+    id: UUID
     name: str
     product_count: int
     stock_by_unit: list[DashboardUnitTotal]
 
 
 class DashboardActivity(BaseModel):
+    id: UUID
     movement_type: str
     product_name: str
     quantity: str
@@ -253,7 +256,7 @@ def dashboard(
             minimum_stock=str(product.minimum_stock),
         )
         for product, quantity in products
-        if product.minimum_stock > 0 and quantity <= product.minimum_stock
+        if product.minimum_stock > 0 and 0 < quantity <= product.minimum_stock
     ]
     out_of_stock_count = sum(1 for _, quantity in products if quantity <= 0)
     total_stock = sum((quantity for _, quantity in products), start=Decimal("0"))
@@ -290,11 +293,13 @@ def dashboard(
         .order_by(Location.name, Product.unit)
     ).all()
     location_totals: dict[UUID, dict] = {}
+    paths = location_paths(session, business_id)
     for location, unit, quantity, product_count in location_rows:
         location_total = location_totals.setdefault(
             location.id,
             {
-                "name": _location_path(session, business_id, location),
+                "id": location.id,
+                "name": paths.get(location.id, location.name),
                 "product_count": 0,
                 "stock_by_unit": [],
             },
@@ -336,6 +341,7 @@ def dashboard(
     ).all()
     activity = [
         DashboardActivity(
+            id=movement.id,
             movement_type=movement.movement_type,
             product_name=product_name,
             quantity=str(movement.quantity_change),
@@ -420,33 +426,18 @@ def list_locations(
     locations = session.scalars(
         select(Location).where(Location.business_id == business_id).order_by(Location.name)
     ).all()
+    paths = location_paths(session, business_id)
     return LocationList(
         items=[
             LocationResponse(
                 id=location.id,
                 name=location.name,
-                full_name=_location_path(session, business_id, location),
+                full_name=paths.get(location.id, location.name),
                 parent_location_id=location.parent_location_id,
             )
             for location in locations
         ]
     )
-
-
-def _location_path(session: Session, business_id: UUID, location: Location) -> str:
-    parts = [location.name]
-    parent_id = location.parent_location_id
-    visited = {location.id}
-    while parent_id is not None and parent_id not in visited:
-        visited.add(parent_id)
-        parent = session.scalar(
-            select(Location).where(Location.business_id == business_id, Location.id == parent_id)
-        )
-        if parent is None:
-            break
-        parts.append(parent.name)
-        parent_id = parent.parent_location_id
-    return " > ".join(reversed(parts))
 
 
 @app.post("/api/v1/locations", status_code=status.HTTP_201_CREATED)
@@ -589,6 +580,7 @@ def update_product(
                 session.query(ProductAlias).filter_by(
                     business_id=business_id, product_id=product_id
                 ).delete(synchronize_session=False)
+                session.flush()
                 session.add_all(
                     ProductAlias(business_id=business_id, product_id=product_id, alias=alias)
                     for alias in aliases

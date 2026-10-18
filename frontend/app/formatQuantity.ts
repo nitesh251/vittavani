@@ -14,7 +14,7 @@ export function formatQuantityLabel(value: string, unit: string) {
   const quantity = formatQuantity(value);
   const numericValue = value.trim();
   if (fixedUnits.has(unit.toLowerCase())) return `${quantity} ${unit}`;
-  if (numericValue === "1" || numericValue === "1.0" || /^1\.0+$/.test(numericValue)) {
+  if (numericValue === "1" || /^1\.0+$/.test(numericValue)) {
     const singular: Record<string, string> = {
       boxes: "box", buses: "bus", categories: "category", classes: "class", feet: "foot",
       glasses: "glass", inches: "inch", knives: "knife", leaves: "leaf", men: "man",

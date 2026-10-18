@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.formatting import format_quantity_label
+from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias
 from app.query_understanding import Candidate, Intent, resolve_product, understand_query
 
@@ -23,46 +24,31 @@ class LookupResult:
     message: str = ""
 
 
-def _location_path(session: Session, business_id: UUID, location: Location) -> str:
-    parts = [location.name]
-    parent_id = location.parent_location_id
-    visited = {location.id}
-    while parent_id is not None:
-        if parent_id in visited:
-            break
-        visited.add(parent_id)
-        parent = session.scalar(
-            select(Location).where(Location.business_id == business_id, Location.id == parent_id)
-        )
-        if parent is None:
-            break
-        parts.append(parent.name)
-        parent_id = parent.parent_location_id
-    return " > ".join(reversed(parts))
-
-
 def lookup_product(session: Session, business_id: UUID, text: str) -> LookupResult:
     query = understand_query(text)
     if query.intent == Intent.LOW_STOCK:
-        products = session.scalars(
-            select(Product).where(Product.business_id == business_id, Product.active.is_(True))
+        totals = (
+            select(
+                InventoryBalance.product_id.label("product_id"),
+                func.sum(InventoryBalance.quantity).label("quantity"),
+            )
+            .where(InventoryBalance.business_id == business_id)
+            .group_by(InventoryBalance.product_id)
+            .subquery()
+        )
+        products = session.execute(
+            select(Product, func.coalesce(totals.c.quantity, 0).label("quantity"))
+            .outerjoin(totals, totals.c.product_id == Product.id)
+            .where(Product.business_id == business_id, Product.active.is_(True))
         ).all()
         low_stock = []
-        for product in products:
-            total = session.scalar(
-                select(func.coalesce(func.sum(InventoryBalance.quantity), 0))
-                .where(
-                    InventoryBalance.business_id == business_id,
-                    InventoryBalance.product_id == product.id,
-                )
-            )
-            available = total or Decimal("0")
-            if product.minimum_stock > 0 and available <= product.minimum_stock:
+        for product, available in products:
+            if product.minimum_stock > 0 and 0 < available <= product.minimum_stock:
                 low_stock.append(f"{product.name} ({format_quantity_label(available, product.unit)})")
         message = (
             f"Low stock: {', '.join(low_stock)}."
             if low_stock
-            else "No products are at or below their configured minimum stock level."
+            else "No in-stock products are at or below their configured minimum stock level."
         )
         return LookupResult(
             intent=query.intent,
@@ -126,8 +112,9 @@ def lookup_product(session: Session, business_id: UUID, text: str) -> LookupResu
         )
         .order_by(Location.name)
     ).all()
+    paths = location_paths(session, business_id)
     locations = tuple(
-        f"{_location_path(session, business_id, location)} ({format_quantity_label(balance.quantity, product.unit)})"
+        f"{paths.get(location.id, location.name)} ({format_quantity_label(balance.quantity, product.unit)})"
         for balance, location in balances
         if balance.quantity > 0
     )

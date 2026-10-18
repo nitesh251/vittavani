@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 _FIXED_UNITS = {"kg", "g", "mg", "l", "ml", "cm", "m", "ft"}
+_PROTECTED_SINGULAR_UNITS = {"bus", "class", "glass"}
 
 
 def format_quantity(value: Decimal) -> str:
@@ -32,11 +33,12 @@ def format_quantity_label(value: Decimal, unit: str) -> str:
             "women": "woman",
         }
         normalized_unit = singular_forms.get(normalized_unit.casefold(), normalized_unit)
-        if normalized_unit.casefold() in _FIXED_UNITS | {"bus", "class", "glass"}:
-            pass
-        elif normalized_unit.casefold().endswith("s"):
+        if (
+            normalized_unit.casefold() not in _FIXED_UNITS | _PROTECTED_SINGULAR_UNITS
+            and normalized_unit.casefold().endswith("s")
+        ):
             normalized_unit = normalized_unit[:-1]
-    elif value != 1:
+    else:
         plural_forms = {
             "box": "boxes",
             "bus": "buses",
