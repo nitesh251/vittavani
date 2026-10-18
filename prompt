@@ -1,0 +1,900 @@
+# MASTER BUILD PROMPT: VITTAVANI
+## A product of Vinayaka Services
+
+You are the principal software architect, senior full-stack engineer, AI engineer, database engineer, security engineer, DevOps engineer, and QA engineer responsible for building a complete, production-oriented SaaS application named **Vittavani**, a product of **Vinayaka Services**.
+
+Your responsibility is to implement the application end to end in the current repository. Do not stop after creating a plan, mockup, scaffold, or collection of disconnected files. Inspect the repository, understand the existing implementation, make changes, run tests, fix failures, and document how to run and deploy the finished application.
+
+Work autonomously on implementation wherever possible. Ask questions only when an essential business decision cannot reasonably be handled with a safe default. Never claim a feature is complete unless its code and tests support that claim.
+
+---
+
+# 1. PRODUCT VISION
+
+Vittavani is a voice-first business assistant for small businesses, retail shops, wholesalers, distributors, and other inventory-based businesses.
+
+Its central promise is:
+
+**"Run your business by speaking naturally. Find stock, remember locations, record sales, track customer credit, and understand your business without complicated software."**
+
+Brand:
+- Product name: Vittavani
+- Company attribution: A product of Vinayaka Services
+- Temporary repository/project name may remain unchanged.
+- Use Vittavani consistently in the visible application, browser title, PWA manifest, login screen, footer, and documentation.
+- Do not invent a company address, registration number, support email, or legal claims.
+- Do not spend time on domain purchases or trademark claims as part of implementation.
+
+Primary audience:
+- Indian small-business owners
+- Shopkeepers with limited technical knowledge
+- Wholesalers and distributors
+- Users who prefer Hindi, Hinglish, or English
+- Users who want to use speech instead of typing
+
+Design principles:
+- Mobile-first, especially Android phones
+- Premium, modern, uncluttered SaaS interface
+- Simple enough for a first-time software user
+- Responsive on mobile, tablet, and desktop
+- Accessible contrast, readable typography, large touch targets
+- Indian currency formatting using INR
+- Business timezone configurable, defaulting to Asia/Kolkata
+- No fake statistics or hardcoded business data in production
+- No decorative controls that do nothing
+
+---
+
+# 2. START BY INSPECTING THE REPOSITORY
+
+Before writing code:
+
+1. Inspect all files, dependencies, existing routes, UI components, database models, and tests.
+2. Identify the existing stack and preserve useful working code.
+3. Identify bugs in Hindi/English product matching and the current command-processing flow.
+4. Create or update `docs/IMPLEMENTATION_PLAN.md` with milestones and acceptance criteria.
+5. Create or update `docs/ARCHITECTURE.md`.
+6. Implement the changes in the current project rather than creating an unrelated demo.
+7. Maintain a `docs/IMPLEMENTATION_STATUS.md` that distinguishes completed, tested, partially implemented, and pending features.
+
+Do not delete working functionality without justification.
+
+If the repository is empty, use the stack specified below.
+
+---
+
+# 3. REQUIRED TECHNOLOGY STACK
+
+Prefer a simple, maintainable architecture over unnecessary microservices.
+
+Frontend:
+- Next.js with TypeScript
+- React
+- Tailwind CSS
+- Accessible reusable UI components
+- Progressive Web App capabilities where practical
+- React Hook Form and Zod for form validation where useful
+
+Backend:
+- Python 3.12+
+- FastAPI
+- Pydantic
+- SQLAlchemy 2.x
+- Alembic for database migrations
+
+Database:
+- PostgreSQL
+- Managed PostgreSQL through Supabase or another compatible provider
+- UUID primary keys for business-facing entities where appropriate
+- Proper indexes, constraints, foreign keys, and transactions
+
+Authentication:
+- Supabase Auth or another maintained authentication solution
+- Server-side session/JWT verification
+- Role-based permissions
+- Never trust a user ID or business ID supplied by the browser without authorization checks
+
+File storage:
+- Supabase Storage or S3-compatible object storage
+- Private buckets by default
+- Signed URLs for authorized file access
+- Do not store uploaded files as database blobs unless there is a justified reason
+
+AI:
+- Provider-independent service abstraction
+- LLM structured outputs for intent extraction when configured
+- Environment-variable configuration for API keys and model names
+- A deterministic fallback for basic searches and common commands
+- Do not require an LLM for ordinary exact product lookup
+
+Speech:
+- Browser speech recognition when supported
+- A replaceable speech-to-text adapter for better Hindi/Hinglish recognition
+- Text input must always work
+- Text-to-speech may be optional
+- Explain browser speech limitations to users rather than silently failing
+
+Testing:
+- Pytest for backend
+- Appropriate frontend unit tests
+- Playwright or equivalent for critical end-to-end browser flows
+- Linting, type checks, and formatting
+
+Deployment:
+- Frontend: Vercel or equivalent
+- Backend: Render, Railway, or equivalent managed Python hosting
+- Database/auth/storage: Supabase or compatible services
+- Docker support for reproducible local development and backend deployment
+- GitHub Actions CI where practical
+
+Before adding dependencies, inspect whether an existing dependency can solve the problem. Pin or constrain versions sensibly and document setup requirements.
+
+---
+
+# 4. CORE USER EXPERIENCE
+
+Create the following main areas:
+
+1. Dashboard
+2. Ask Vittavani
+3. Inventory
+4. Storage Locations
+5. Sales
+6. Customers and Udhaar
+7. Purchases and Suppliers
+8. Reports
+9. Activity/Audit History
+10. Settings and Business Profile
+
+Use a persistent desktop navigation sidebar and a suitable mobile navigation pattern.
+
+Dashboard should show real database-derived metrics:
+- Today's sales
+- Number of transactions
+- Low-stock products
+- Total outstanding customer credit
+- Recent activity
+- Items that need replenishment
+
+Show loading, empty, success, and error states consistently.
+
+Never show fabricated values such as example revenue or fake customer counts unless explicitly labelled as demo data in a demo environment.
+
+Use reusable components for tables, search, forms, dialogs, confirmation steps, status indicators, and toast messages.
+
+Add an onboarding flow:
+- Create business
+- Choose business type
+- Choose preferred language
+- Configure currency and timezone
+- Add first location
+- Add first product
+- Optionally import products from CSV
+
+Make the application usable even when the business has no data.
+
+---
+
+# 5. INVENTORY SYSTEM
+
+Inventory correctness is a top priority.
+
+Implement:
+
+## Product catalogue
+Each product should support:
+- Product ID
+- Name
+- SKU or barcode
+- Category
+- Brand
+- Unit of measure
+- Alternate units where needed
+- Purchase price
+- Selling price
+- Minimum stock threshold
+- Optional description
+- Optional image
+- Active/inactive status
+- Product aliases
+- Created/updated timestamps
+
+Examples of units:
+- Piece
+- Packet
+- Box
+- Kilogram
+- Gram
+- Litre
+- Millilitre
+- Metre
+- Roll
+- Carton
+
+Avoid assuming all units can be converted automatically. Only convert units when a valid conversion rule is configured.
+
+## Location hierarchy
+
+Support a hierarchy such as:
+
+Business
+  -> Building
+     -> Floor
+        -> Room
+           -> Rack
+              -> Shelf
+                 -> Bin
+
+Use a `parent_location_id` relationship or equivalent structure.
+
+Examples:
+- Shop Floor > Rack A > Shelf 2
+- Storeroom > Rack B > Shelf 4
+- Warehouse > Zone 1 > Rack C > Bin 7
+
+A product can exist at multiple locations at the same time.
+
+## Inventory balance
+
+Do not store a single global product quantity as the sole source of truth.
+
+Implement inventory balances by:
+- Business
+- Product
+- Location
+- Optional batch/lot if needed later
+
+Each balance must represent the quantity at that specific location.
+
+Use a unique constraint for the appropriate product/location combination.
+
+## Stock movements
+
+Maintain an append-only movement history:
+- Opening stock
+- Purchase receipt
+- Sale deduction
+- Return
+- Manual adjustment
+- Transfer out
+- Transfer in
+- Damage or expiry
+- Correction/reversal
+
+Record:
+- Product
+- Quantity change
+- Source location
+- Destination location
+- Movement type
+- Reference transaction
+- User who initiated the operation
+- Timestamp
+- Reason or note
+
+Never silently overwrite inventory history.
+
+Use database transactions and suitable row locking or concurrency control to prevent race conditions.
+
+Reject negative stock by default. If allowing negative stock is a future business setting, implement it explicitly rather than implicitly.
+
+## Stock transfers
+
+Moving stock between locations must:
+1. Validate available quantity at the source.
+2. Deduct from the source.
+3. Add to the destination.
+4. Record the transfer and corresponding movements.
+5. Commit everything atomically.
+
+If any step fails, roll back the entire operation.
+
+## Low-stock alerts
+
+Compare available stock against the configured minimum threshold. Avoid duplicate alerts for the same unresolved low-stock condition.
+
+---
+
+# 6. CRITICAL REQUIREMENT: HINDI, ENGLISH, AND HINGLISH UNDERSTANDING
+
+This is a core product feature, not an optional enhancement.
+
+The current prototype has failed on basic queries such as:
+
+- "Amul butter kahan rakha hai?"
+- "अमूल बटर कहाँ रखा है?"
+- "वेयर इज़ अमूल बटर?"
+- "Where is Amul Butter?"
+- "Amul butter kidhar hai?"
+- "अमूल बटर कितना बचा है?"
+- "How much Amul butter is left?"
+- "Maggi kaha milega?"
+- "मैगी कहाँ मिलेगी?"
+- "Kitna stock hai?"
+- "Show low stock items."
+
+All equivalent queries must reach the same intent and product resolution when their meaning is equivalent.
+
+Do not solve this by hardcoding Amul Butter or individual example phrases.
+
+## Implement a reusable query understanding pipeline
+
+Step 1: Preserve the original query.
+
+Never discard the original user text.
+
+Step 2: Normalize text safely.
+
+Implement reusable normalization that can handle:
+- Unicode normalization
+- Leading/trailing and repeated whitespace
+- Case normalization for Latin text
+- Punctuation and common speech transcription artifacts
+- Devanagari text
+- English text
+- Romanized Hindi/Hinglish
+- Common spelling variations
+- Product aliases
+- Common query phrases such as "kahan hai", "kidhar hai", "where is", "kitna hai", "how much", "stock batao", "kahan rakha hai"
+
+Do not strip all Devanagari characters or transliterate every word blindly.
+
+Step 3: Separate intent phrases from the product/entity phrase.
+
+Recognize intents such as:
+- Product location lookup
+- Stock quantity lookup
+- Product search
+- Low-stock report
+- Stock receipt
+- Stock adjustment
+- Stock transfer
+- Sale recording
+- Customer balance lookup
+- Customer payment recording
+- Daily business summary
+- Help or unknown intent
+
+Support natural variations of these intents across Hindi, Hinglish, and English.
+
+Step 4: Resolve products.
+
+Use a layered strategy:
+1. Exact canonical name
+2. Exact alias
+3. Normalized canonical name
+4. Normalized alias
+5. Transliteration candidates
+6. Token-based matching
+7. Fuzzy matching using a maintained library such as RapidFuzz
+8. Optional multilingual semantic matching for difficult queries
+
+Prefer deterministic lookup before AI calls.
+
+Build an alias system allowing a business to store multiple aliases for a product. Examples:
+- Canonical product: Amul Butter
+- Aliases: अमूल बटर, Amul makhan, amul butter, local shop nickname
+
+Aliases must be scoped to the correct business and indexed appropriately.
+
+For Hindi/English matching, use tested transliteration or normalization libraries where appropriate. Do not assume naive character-by-character transliteration will handle all Indian names correctly.
+
+Step 5: Use confidence and ambiguity thresholds.
+
+- Exact matches can be resolved automatically.
+- High-confidence unique matches can be used for read-only lookups.
+- Ambiguous matches must display candidates.
+- Low-confidence matches must ask the user to clarify.
+- Never return a random first result when multiple products have similar names.
+
+Step 6: Execute the intent.
+
+For read-only queries, retrieve actual authorized database records.
+
+For write operations, validate the entity, quantity, unit, location, and relevant transaction data before changing anything.
+
+Step 7: Respond naturally.
+
+Return a concise answer in the user's preferred language when feasible.
+
+Example:
+"Amul Butter ke 20 packets available hain. Location: Storeroom, Rack B, Shelf 2."
+
+If no location is recorded:
+"Amul Butter ke 20 packets hain, lekin storage location record nahi hai."
+
+Never invent a location.
+
+## Voice interaction
+
+The microphone button must:
+- Clearly indicate listening state
+- Show the recognized transcript
+- Allow the user to edit the transcript before submission when appropriate
+- Handle permission denial
+- Handle unsupported browsers
+- Handle empty transcripts
+- Handle transcription errors
+- Provide a typed fallback
+
+For a stock-changing command, show a confirmation screen containing the parsed action and its important details.
+
+Do not make a financial or inventory change simply because speech recognition produced text.
+
+## Required language tests
+
+Create automated tests for equivalent query variations.
+
+For example, seed:
+- Product: Amul Butter
+- Alias: अमूल बटर
+- Alias: Amul makhan
+- Quantity: 20
+- Location: Storeroom > Rack B > Shelf 2
+
+Test all of:
+- "Where is Amul Butter?"
+- "Amul butter kahan rakha hai?"
+- "अमूल बटर कहाँ रखा है?"
+- "वेयर इज़ अमूल बटर?"
+- "अमूल बटर कितना बचा है?"
+- "How much Amul butter is available?"
+- "Amul makhan kidhar hai?"
+
+All appropriate lookup queries must resolve to the same product.
+
+Also test:
+- Two products with similar names
+- Hindi aliases
+- Missing aliases
+- Speech-recognition typos
+- Unknown products
+- Empty query
+- No location recorded
+- Multiple locations for the same product
+
+Test the complete pipeline, not only an isolated helper function.
+
+---
+
+# 7. SALES AND CHECKOUT
+
+Implement a complete sales workflow.
+
+A sale should support:
+- Customer selection or walk-in customer
+- Multiple products
+- Quantity and unit validation
+- Selling price
+- Optional discount
+- Total calculation
+- Payment amount
+- Payment method
+- Paid, partially paid, or credit status
+- Sale timestamp
+- Sale receipt or printable invoice
+- Sale cancellation and controlled reversal
+
+When a sale is completed:
+1. Validate all product quantities.
+2. Validate available stock at the selected location.
+3. Calculate totals on the server.
+4. Create the sale and line items.
+5. Deduct inventory.
+6. Record stock movements.
+7. Record payment and outstanding credit as appropriate.
+8. Commit the entire transaction atomically.
+
+Never trust totals submitted by the browser. Calculate monetary amounts on the backend using appropriate decimal arithmetic.
+
+Use idempotency keys or equivalent protection to prevent duplicate sales when the client retries a request.
+
+A failed sale must not partially update inventory or customer balances.
+
+---
+
+# 8. CUSTOMERS, UDHAR, AND PAYMENTS
+
+Implement:
+- Customer profiles
+- Optional phone number
+- Outstanding balance
+- Customer ledger
+- Credit sales
+- Payment receipts
+- Partial payments
+- Ledger history
+- Customer balance report
+- Search by customer name and aliases
+
+Use append-only ledger entries with references to the relevant sale or payment.
+
+Do not allow arbitrary client-supplied balances to overwrite ledger-derived balances.
+
+Define and document the balance calculation consistently.
+
+Record all financial entries with timestamps and the responsible user.
+
+Do not assume a customer has paid just because an AI command was recognized. Confirm payment details before recording them.
+
+---
+
+# 9. PURCHASES AND SUPPLIERS
+
+Implement a basic purchase receipt workflow:
+- Supplier record
+- Purchase reference
+- Purchased items
+- Quantities
+- Unit cost
+- Destination storage location
+- Receipt date
+- Optional invoice attachment
+- Stock movement generated on receipt
+
+For v1, keep supplier accounting simple. Do not implement complex tax accounting unless separately scoped.
+
+Do not increase inventory before a purchase receipt is confirmed.
+
+---
+
+# 10. AI COMMAND EXECUTION AND SAFETY
+
+Create a provider-independent intent service.
+
+Use a typed schema for intent extraction, for example:
+- intent
+- product query
+- customer query
+- quantity
+- unit
+- source location
+- destination location
+- amount
+- confidence
+- missing fields
+- clarification required
+
+Validate all model output using Pydantic or an equivalent schema.
+
+Never allow the model to:
+- Execute arbitrary SQL
+- Access credentials
+- Choose another business's records
+- Bypass authorization
+- Change inventory without validation
+- Record a payment without confirmation
+- Invent products, quantities, prices, or locations
+
+The AI should propose a structured action. Deterministic application code validates and executes it.
+
+For ambiguous commands, ask focused questions.
+
+Example:
+User: "Add 20 packets."
+
+Assistant: "Which product should I add 20 packets of, and where should they be stored?"
+
+Example:
+User: "Move 10 Maggi packets to Rack B."
+
+Assistant: "Move 10 packets of Maggi from Storeroom Rack A to Rack B?"
+
+Only proceed after the user confirms the complete action.
+
+Maintain an audit record of:
+- Original query
+- Parsed intent
+- Resolved entities
+- Confirmation status
+- Executed operation
+- Outcome
+- Error details where appropriate
+
+Avoid storing unnecessary personal or sensitive speech content. Define retention and deletion behavior.
+
+---
+
+# 11. DATABASE DESIGN AND MULTI-TENANCY
+
+Implement a normalized schema with at least the following entities:
+
+- businesses
+- business_members
+- roles or permissions
+- locations
+- products
+- product_aliases
+- inventory_balances
+- stock_movements
+- customers
+- customer_aliases if needed
+- suppliers
+- purchases
+- purchase_items
+- sales
+- sale_items
+- payments
+- ledger_entries
+- command_audit
+- file metadata where needed
+
+Use UUIDs or another suitable stable primary-key strategy.
+
+Every business-owned record must be scoped to a business.
+
+Enforce business isolation at the backend query layer. If using PostgreSQL Row-Level Security, configure and test the policies correctly. Never assume that enabling RLS alone guarantees isolation.
+
+Add indexes for frequent searches and joins.
+
+Add foreign keys, unique constraints, quantity validation, and monetary constraints.
+
+Use Alembic migrations. Do not rely on `create_all()` as the production schema management strategy.
+
+Seed demo data only through an explicit development/demo command. Never automatically create fake production records.
+
+---
+
+# 12. SECURITY AND PRIVACY
+
+Implement:
+- Secure authentication
+- Authorization on every protected endpoint
+- Tenant/business isolation
+- Server-side input validation
+- Rate limiting for sensitive endpoints
+- Safe CORS configuration
+- HTTPS deployment assumptions
+- Secret management through environment variables
+- Secure file upload validation
+- Private storage by default
+- Protection against SQL injection
+- Appropriate XSS and CSRF protections based on the authentication architecture
+- Structured logging without exposing secrets
+- Error messages that do not leak internal stack traces to end users
+- Data export and deletion procedures
+- Backup and recovery documentation
+
+Do not commit real API keys, database credentials, JWT secrets, or service-role keys.
+
+Create `.env.example` with placeholder values only.
+
+Do not expose service-role keys in frontend code.
+
+Before enabling public sign-up or production traffic, verify that one business cannot access another business's data through any API, query, file, report, or AI workflow.
+
+---
+
+# 13. FILE STORAGE
+
+Use object storage for:
+- Product photos
+- Purchase invoice attachments
+- Optional business logo
+
+Implement:
+- File size limits
+- Allowed MIME types
+- File extension validation
+- Private storage policies
+- Authorized signed download URLs
+- Metadata records
+- Error handling for upload failures
+
+Do not store unnecessary images or audio recordings.
+
+For v1, do not require file uploads for normal inventory operations.
+
+---
+
+# 14. REPORTS
+
+Implement real database-derived reports:
+- Today's sales
+- Sales by date range
+- Product stock by location
+- Low-stock products
+- Customer outstanding balances
+- Stock movement history
+- Purchase history
+- Best-selling products where data supports the calculation
+
+Support pagination and appropriate filtering.
+
+Make date ranges use the configured business timezone.
+
+Do not calculate profit using selling price alone. If reporting gross profit, use a documented cost basis and clearly state any limitations.
+
+Export CSV for suitable reports, with safe handling of user-provided values.
+
+---
+
+# 15. TESTING AND ACCEPTANCE CRITERIA
+
+Write tests as part of implementation.
+
+At minimum, test:
+
+## Inventory
+- Create product
+- Create nested locations
+- Place the same product in multiple locations
+- Receive stock
+- Transfer stock
+- Reject invalid quantities
+- Reject negative stock
+- Preserve movement history
+- Handle concurrent stock changes safely
+
+## Language understanding
+- Hindi, English, and Hinglish equivalent queries
+- Devanagari transliteration variants
+- Product aliases
+- Fuzzy matching
+- Ambiguous matches
+- Unknown products
+- Similar product names
+- Correct quantity and location responses
+
+## Sales
+- Complete sale
+- Deduct stock
+- Update customer ledger
+- Handle partial payment
+- Roll back when any transaction step fails
+- Prevent duplicate submissions
+
+## Security
+- Unauthenticated access is rejected
+- Unauthorized roles are rejected
+- Cross-business record access is rejected
+- Cross-business file access is rejected
+
+## UI
+- Login
+- Onboarding
+- Product creation
+- Location creation
+- Product search
+- Hindi voice/text lookup
+- Stock receipt
+- Sale completion
+- Customer payment
+- Dashboard refresh
+
+Run tests and fix failures. Do not merely write tests and leave them unexecuted.
+
+If an external service cannot be accessed locally, use a documented mock for automated tests and provide a separate integration test procedure.
+
+---
+
+# 16. LOCAL DEVELOPMENT AND DEPLOYMENT
+
+Create:
+- Clear README
+- `.env.example`
+- Backend dependency manifest
+- Frontend package manifest
+- Database migrations
+- Dockerfile where appropriate
+- Docker Compose for local PostgreSQL if useful
+- Health endpoints
+- CI workflow
+- Deployment configuration examples
+- Backup and restore instructions
+
+Provide exact commands to:
+1. Install dependencies
+2. Configure environment variables
+3. Start the database
+4. Apply migrations
+5. Seed development data
+6. Start backend
+7. Start frontend
+8. Run automated tests
+9. Build the production frontend
+10. Deploy each service
+11. Configure production authentication and storage
+12. Verify the deployment
+
+Do not claim that the app is deployed unless deployment actually succeeded.
+
+Do not silently provision cloud resources or incur costs. Ask for approval before actions that create billable resources.
+
+Do not require users to paste secrets into source code or commit them to Git.
+
+---
+
+# 17. PERFORMANCE AND COST
+
+Keep the architecture economical for an early-stage product.
+
+- Do not invoke an LLM for every simple product lookup.
+- Use indexed database searches and cached reference data where appropriate.
+- Avoid unnecessary microservices.
+- Paginate large results.
+- Track AI usage and errors.
+- Provide deterministic fallbacks.
+- Keep background jobs limited to tasks that actually need them.
+- Document the main cost drivers and how to monitor them.
+- Verify provider pricing and free-tier limits at deployment time instead of assuming they are permanent.
+
+---
+
+# 18. IMPLEMENTATION ORDER
+
+Implement in this sequence:
+
+Milestone 1: Repository assessment and plan.
+
+Milestone 2: Database schema, migrations, business isolation, authentication foundation.
+
+Milestone 3: Product catalogue, aliases, location hierarchy, inventory balances, stock movements.
+
+Milestone 4: Search and multilingual query understanding, including automated Hindi/Hinglish regression tests.
+
+Milestone 5: Sales, payments, customer ledger, and atomic transactions.
+
+Milestone 6: Responsive dashboard, inventory, customers, sales, reports, and onboarding UI.
+
+Milestone 7: AI structured intent extraction, confirmation flows, voice input, and optional spoken responses.
+
+Milestone 8: File storage, suppliers, purchases, and exports.
+
+Milestone 9: Security review, automated tests, CI, observability, backup and recovery documentation.
+
+Milestone 10: Production build and deployment instructions.
+
+Do not spend the majority of the effort on a polished landing page while core operations remain broken.
+
+After each milestone:
+- Run relevant tests.
+- Fix regressions.
+- Update implementation status.
+- Explain any remaining limitations.
+
+---
+
+# 19. DEFINITION OF DONE
+
+The implementation is complete only when:
+
+1. The frontend and backend run locally using documented commands.
+2. Database migrations work from an empty database.
+3. Users can authenticate and access only their authorized business.
+4. Products can exist at multiple locations with correct independent balances.
+5. Stock receipts, transfers, and sales create correct audit movements.
+6. Sales and related stock/ledger updates are transactional.
+7. Customer credit and payments produce correct balances.
+8. Hindi, Hinglish, and English product queries work through the same reusable pipeline.
+9. The specific Hindi/English regression tests pass.
+10. Ambiguous commands require clarification and confirmation.
+11. UI controls are functional, accessible, and responsive.
+12. Critical automated tests pass.
+13. Production secrets are not committed.
+14. Deployment and backup instructions are complete.
+15. The implementation status accurately reports anything not completed.
+
+---
+
+# 20. FINAL INSTRUCTIONS TO COPILOT
+
+Start by inspecting the current repository. Then create the implementation plan and begin implementing Milestone 1 and Milestone 2.
+
+Continue through the milestones without stopping after producing a plan.
+
+Do not return only explanations or example snippets. Edit the actual repository files, add tests, run them, and fix the failures.
+
+When you finish, report:
+- What you implemented
+- Files and modules changed
+- Commands used to run the application
+- Tests executed and their actual results
+- Environment variables required
+- Deployment steps
+- Security limitations
+- Features still incomplete
+
+Be honest about what you could not test or deploy.
+
+Build Vittavani as a dependable business application—not just an attractive AI demo.
