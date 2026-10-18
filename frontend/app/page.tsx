@@ -69,6 +69,15 @@ type SpeechWindow = Window & {
 
 const examples = ["Amul butter kahan rakha hai?", "अमूल बटर कितना बचा है?", "Show low stock items."];
 const headers = { "Content-Type": "application/json" };
+const emptyProductForm = {
+  name: "",
+  sku: "",
+  unit: "packet",
+  selling_price: "0",
+  minimum_stock: "0",
+  aliases: "",
+  active: true,
+};
 
 function movementLabel(value: string) {
   return value.replaceAll("_", " ");
@@ -128,7 +137,7 @@ export default function Home() {
   const [inventoryWriteError, setInventoryWriteError] = useState("");
   const [writing, setWriting] = useState(false);
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
-  const [productForm, setProductForm] = useState({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "", active: true });
+  const [productForm, setProductForm] = useState(emptyProductForm);
   const [stockMode, setStockMode] = useState("receipt");
   const [stockForm, setStockForm] = useState({ product_id: "", location_id: "", source_location_id: "", destination_location_id: "", quantity: "", unit: "", note: "" });
   const [locationForm, setLocationForm] = useState({ name: "", parent_location_id: "" });
@@ -242,7 +251,7 @@ export default function Home() {
     void writeInventory(path, editingProduct ? "PUT" : "POST", payload, editingProduct ? "Product updated." : "Product created.").then((saved) => {
       if (saved) {
         setEditingProduct(null);
-        setProductForm({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "", active: true });
+        setProductForm(emptyProductForm);
       }
     });
   }
@@ -613,7 +622,7 @@ export default function Home() {
                   {editingProduct && <label>Status<select value={productForm.active ? "active" : "inactive"} onChange={(event) => setProductForm({ ...productForm, active: event.target.value === "active" })}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>}
                   <div className="form-actions">
                     <button className="submit" type="submit" disabled={writing}>{writing ? "Saving…" : editingProduct ? "Save product" : "Add product"}</button>
-                    {editingProduct && <button className="refresh-button" type="button" onClick={() => { setEditingProduct(null); setProductForm({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "", active: true }); }}>Cancel</button>}
+                    {editingProduct && <button className="refresh-button" type="button" onClick={() => { setEditingProduct(null); setProductForm(emptyProductForm); }}>Cancel</button>}
                   </div>
                 </form>
               </section>

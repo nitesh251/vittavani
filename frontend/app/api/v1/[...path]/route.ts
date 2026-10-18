@@ -28,12 +28,18 @@ async function forward(request: NextRequest, context: RouteContext) {
   }
 
   try {
-    const response = await fetch(`${apiUrl}/api/v1/${path.map(encodeURIComponent).join("/")}`, {
-      method: request.method,
-      headers,
-      body: request.method === "GET" ? undefined : await request.arrayBuffer(),
-      cache: "no-store",
-    });
+    const response = await fetch(
+      `${apiUrl}/api/v1/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`,
+      {
+        method: request.method,
+        headers,
+        body:
+          request.method === "POST" || request.method === "PUT"
+            ? await request.arrayBuffer()
+            : undefined,
+        cache: "no-store",
+      },
+    );
     const responseHeaders = new Headers();
     const responseType = response.headers.get("content-type");
     if (responseType) responseHeaders.set("content-type", responseType);

@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.formatting import format_quantity, format_quantity_label
+from app.inventory_metrics import is_low_stock
 from app.main import app
 from app.models import Business, InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
@@ -212,6 +213,12 @@ def test_out_of_stock_product_is_reported_separately_from_low_stock(session):
     assert "Rice" not in result.message
 
 
+def test_low_stock_rule_ignores_zero_threshold_and_out_of_stock():
+    assert is_low_stock(Decimal("2"), Decimal("5"))
+    assert not is_low_stock(Decimal("0"), Decimal("5"))
+    assert not is_low_stock(Decimal("1"), Decimal("0"))
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -369,6 +376,44 @@ def test_dashboard_keeps_different_units_separate(client, session):
         {"unit": "bag", "quantity": "4.000", "display_quantity": "4 bags"},
         {"unit": "packet", "quantity": "3.000", "display_quantity": "3 packets"},
     ]
+
+
+def test_dashboard_location_aggregates_exclude_inactive_products(client, session):
+    product_id = UUID("00000000-0000-0000-0000-000000000074")
+    session.add(
+        Product(
+            id=product_id,
+            business_id=BUSINESS_ID,
+            name="Archived Rice",
+            unit="bag",
+            active=False,
+        )
+    )
+    session.flush()
+    session.add(
+        InventoryBalance(
+            business_id=BUSINESS_ID,
+            product_id=product_id,
+            location_id=UUID("00000000-0000-0000-0000-000000000010"),
+            quantity=Decimal("7"),
+        )
+    )
+    session.commit()
+
+    data = client.get("/api/v1/dashboard", headers={"X-Dev-Token": "local-test-token"}).json()
+    storeroom = next(item for item in data["stock_by_location"] if item["name"] == "Storeroom")
+
+    assert data["product_count"] == 1
+    assert data["stock_by_unit"] == [
+        {"unit": "packet", "quantity": "23.000", "display_quantity": "23 packets"}
+    ]
+    assert storeroom["product_count"] == 1
+    assert storeroom["stock_by_unit"] == [
+        {"unit": "packet", "quantity": "3.000", "display_quantity": "3 packets"}
+    ]
+    inventory = client.get("/api/v1/products", headers={"X-Dev-Token": "local-test-token"}).json()
+    archived = next(item for item in inventory["items"] if item["id"] == str(product_id))
+    assert archived["active"] is False
 
 
 def test_request_cannot_select_another_business(client):

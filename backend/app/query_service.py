@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.formatting import format_quantity_label
+from app.inventory_metrics import is_low_stock
 from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias
 from app.query_understanding import Candidate, Intent, resolve_product, understand_query
@@ -43,7 +44,7 @@ def lookup_product(session: Session, business_id: UUID, text: str) -> LookupResu
         ).all()
         low_stock = []
         for product, available in products:
-            if product.minimum_stock > 0 and 0 < available <= product.minimum_stock:
+            if is_low_stock(available, product.minimum_stock):
                 low_stock.append(f"{product.name} ({format_quantity_label(available, product.unit)})")
         message = (
             f"Low stock: {', '.join(low_stock)}."

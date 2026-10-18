@@ -7,13 +7,14 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.formatting import format_quantity, format_quantity_label
+from app.inventory_metrics import is_low_stock
 from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
@@ -277,7 +278,7 @@ def dashboard(
             display_minimum_stock=format_quantity_label(product.minimum_stock, product.unit),
         )
         for product, quantity in products
-        if product.minimum_stock > 0 and 0 < quantity <= product.minimum_stock
+        if is_low_stock(quantity, product.minimum_stock)
     ]
     out_of_stock_count = sum(1 for _, quantity in products if quantity <= 0)
     total_stock = sum((quantity for _, quantity in products), start=Decimal("0"))
@@ -313,7 +314,11 @@ def dashboard(
             (Product.business_id == InventoryBalance.business_id)
             & (Product.id == InventoryBalance.product_id),
         )
-        .where(Location.business_id == business_id, InventoryBalance.quantity > 0)
+        .where(
+            Location.business_id == business_id,
+            Product.active.is_(True),
+            InventoryBalance.quantity > 0,
+        )
         .group_by(Location.id, Product.unit)
         .order_by(Location.name, Product.unit)
     ).all()
@@ -632,9 +637,12 @@ def update_product(
             for field, value in changes.items():
                 setattr(product, field, value)
             if aliases is not None:
-                session.query(ProductAlias).filter_by(
-                    business_id=business_id, product_id=product_id
-                ).delete(synchronize_session=False)
+                session.execute(
+                    delete(ProductAlias).where(
+                        ProductAlias.business_id == business_id,
+                        ProductAlias.product_id == product_id,
+                    )
+                )
                 session.flush()
                 session.add_all(
                     ProductAlias(business_id=business_id, product_id=product_id, alias=alias)
