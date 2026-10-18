@@ -795,6 +795,13 @@ def test_product_create_update_and_inventory_reads_are_persisted_and_tenant_scop
         json={"aliases": ["चावल"]},
     )
     assert same_alias_update.status_code == 200
+    cleared_sku = client.put(
+        f"/api/v1/products/{product_id}",
+        headers=headers,
+        json={"sku": None},
+    )
+    assert cleared_sku.status_code == 200
+    assert cleared_sku.json()["sku"] is None
 
     products = client.get("/api/v1/products", headers=headers)
     locations = client.get("/api/v1/locations", headers=headers)

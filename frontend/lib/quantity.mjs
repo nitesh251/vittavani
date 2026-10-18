@@ -1,13 +1,14 @@
 export function compareDecimalStrings(left, right) {
   const decimalPattern = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
   if (!decimalPattern.test(left) || !decimalPattern.test(right)) {
-    return left.localeCompare(right);
+    return Math.sign(left.localeCompare(right));
   }
   const precision = Math.max(left.split(".")[1]?.length ?? 0, right.split(".")[1]?.length ?? 0);
   const scale = BigInt(`1${"0".repeat(precision)}`);
   const toScaledInteger = (value) => {
     const negative = value.startsWith("-");
-    const [whole, fraction = ""] = (negative ? value.slice(1) : value).split(".");
+    const unsigned = value.startsWith("-") || value.startsWith("+") ? value.slice(1) : value;
+    const [whole, fraction = ""] = unsigned.split(".");
     const fractional = BigInt(fraction.padEnd(precision, "0") || "0");
     const amount = BigInt(whole || "0") * scale + fractional;
     return negative ? -amount : amount;

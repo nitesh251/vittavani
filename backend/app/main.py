@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.ai_service import AIProviderError, ai_is_configured, extract_product_query
+from app.ai_service import AI_INTENT_MAP, AIProviderError, ai_is_configured, extract_product_query
 from app.config import settings
 from app.database import get_db
 from app.formatting import format_quantity, format_quantity_label
@@ -302,12 +302,7 @@ def ask(
             interpretation = extract_product_query(body.query)
         except AIProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        interpreted_intent = {
-            "stock": Intent.STOCK,
-            "location": Intent.LOCATION,
-            "low_stock": Intent.LOW_STOCK,
-            "unknown": Intent.UNKNOWN,
-        }[interpretation["intent"]]
+        interpreted_intent = AI_INTENT_MAP[interpretation["intent"]]
         interpreted_product = interpretation["product_query"]
     result = lookup_product(
         session,

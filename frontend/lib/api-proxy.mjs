@@ -23,6 +23,11 @@ function isSameOrigin(request) {
   }
 }
 
+function isCrossSiteRequest(request) {
+  const site = request.headers.get("sec-fetch-site");
+  return site === "cross-site" || site === "same-site";
+}
+
 export async function proxyApiRequest(request, path, environment, fetcher) {
   if (environment.NODE_ENV !== "development") {
     return Response.json(
@@ -31,6 +36,16 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
           "The development-token proxy is disabled outside Next.js development mode. Production authentication is not configured.",
       },
       { status: 503 },
+    );
+  }
+
+  if (isCrossSiteRequest(request)) {
+    return Response.json({ detail: "Cross-site requests are not allowed." }, { status: 403 });
+  }
+  if (request.headers.get("origin") && !isSameOrigin(request)) {
+    return Response.json(
+      { detail: "Requests with an Origin header must use the same development origin." },
+      { status: 403 },
     );
   }
 

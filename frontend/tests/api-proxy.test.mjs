@@ -74,7 +74,30 @@ test("rejects cross-origin writes", async () => {
   );
 
   assert.equal(response.status, 403);
-  assert.match((await response.json()).detail, /valid same-origin Origin header/);
+  assert.match((await response.json()).detail, /same development origin/);
+});
+
+test("rejects cross-site GET requests", async () => {
+  const response = await proxyApiRequest(
+    request("dashboard", "GET", { "sec-fetch-site": "cross-site" }),
+    ["dashboard"],
+    development,
+    fetch,
+  );
+
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).detail, /Cross-site requests/);
+});
+
+test("rejects a foreign Origin on read requests", async () => {
+  const response = await proxyApiRequest(
+    request("dashboard", "GET", { origin: "http://forged.local" }),
+    ["dashboard"],
+    development,
+    fetch,
+  );
+
+  assert.equal(response.status, 403);
 });
 
 test("does not trust client-supplied forwarded host headers for writes", async () => {

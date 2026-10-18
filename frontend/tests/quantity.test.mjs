@@ -17,9 +17,12 @@ test("orders positive, negative, and fractional quantities", () => {
   assert.equal(compareDecimalStrings("-0.5", "0"), -1);
   assert.equal(compareDecimalStrings("-2.01", "-2.001"), -1);
   assert.equal(compareDecimalStrings("0.001", "0.01"), -1);
+  assert.equal(compareDecimalStrings("+0.5", "0.4"), 1);
+  assert.equal(compareDecimalStrings("+5.5", "6"), -1);
 });
 
 test("falls back safely for non-decimal representations", () => {
   assert.doesNotThrow(() => compareDecimalStrings("1e-7", "1e-8"));
   assert.doesNotThrow(() => compareDecimalStrings("invalid", "1"));
+  assert.ok([-1, 0, 1].includes(compareDecimalStrings("invalid", "1")));
 });

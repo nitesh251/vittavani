@@ -3,12 +3,21 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.config import settings
+from app.query_understanding import Intent
 
 _MAX_PROVIDER_RESPONSE_BYTES = 32_768
 
 
 class AIProviderError(Exception):
     pass
+
+
+AI_INTENT_MAP = {
+    "stock": Intent.STOCK,
+    "location": Intent.LOCATION,
+    "low_stock": Intent.LOW_STOCK,
+    "unknown": Intent.UNKNOWN,
+}
 
 
 def ai_is_configured() -> bool:
@@ -68,7 +77,7 @@ def extract_product_query(question: str) -> dict[str, str | None]:
         raise AIProviderError("AI Assistant returned an invalid response. Try Normal Search.")
     intent = parsed.get("intent")
     product_query = parsed.get("product_query")
-    if intent not in {"stock", "location", "low_stock", "unknown"}:
+    if not isinstance(intent, str) or intent not in AI_INTENT_MAP:
         raise AIProviderError("AI Assistant returned an unsupported intent. Try Normal Search.")
     if product_query is not None and (
         not isinstance(product_query, str)

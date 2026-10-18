@@ -17,7 +17,7 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 5. Create the optional sample data explicitly: `python -m app.seed_demo` from `backend/`. This command refuses non-development mode or an already existing configured business.
 6. Start the API: `uvicorn app.main:app --reload` from `backend/`.
 7. Configure the web app in `frontend/.env.local`: set `NEXT_PUBLIC_API_URL=http://localhost:8000` and `DEV_API_TOKEN` to the same local-only value as the backend's `DEV_API_TOKEN`. If the file currently uses `NEXT_PUBLIC_DEV_API_TOKEN`, rename that setting to `DEV_API_TOKEN`; `NEXT_PUBLIC_*` values are intended for browser-visible configuration and must not contain credentials. `.env.local` is ignored by Git. The same-origin Next.js route attaches the token to backend requests; the frontend component never reads or sends it.
-8. Install and start the frontend: `npm install && npm run dev` from `frontend/`.
+8. Install and start the frontend: `npm install && npm run dev -- --hostname 127.0.0.1` from `frontend/`.
 9. Open `http://localhost:3000`. Health check: `http://localhost:8000/health`.
 
 Run backend tests using `pytest` from `backend/`. From `frontend/`, run `npm run lint`, `npm test` for API-proxy and exact-quantity utility tests, and `npm run build` for a production build. `npm run test:proxy` runs only the proxy checks.
@@ -38,8 +38,10 @@ uvicorn app.main:app --reload
 
 ```powershell
 cd frontend
-npm run dev
+npm run dev -- --hostname 127.0.0.1
 ```
+
+Keep the development frontend bound to loopback; the development proxy is not a production authentication boundary.
 
 Verify the API is running at `http://localhost:8000/health`, then open `http://localhost:3000`; Dashboard and Inventory should load through the same-origin proxy. If authentication still fails, compare the token values locally without printing them and confirm both processes were restarted.
 
