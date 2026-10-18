@@ -411,7 +411,7 @@ def test_product_create_update_and_inventory_reads_are_persisted_and_tenant_scop
     assert updated.status_code == 200
     assert updated.json()["name"] == "Basmati Rice"
     assert updated.json()["selling_price"] == "56.00"
-    assert updated.json()["minimum_stock"] == "3.000"
+    assert format_quantity(Decimal(updated.json()["minimum_stock"])) == "3"
     assert updated.json()["aliases"] == ["चावल"]
 
     products = client.get("/api/v1/products", headers=headers)
@@ -473,6 +473,72 @@ def test_stock_receipt_adjustments_and_transfer_preserve_total_and_record_moveme
         storeroom_id: "5.000",
     }
     assert session.scalar(select(func.count(StockMovement.id))) == 5
+    assert session.scalar(
+        select(func.count(StockMovement.id)).where(StockMovement.movement_type == "purchase_receipt")
+    ) == 1
+    assert session.scalar(
+        select(func.count(StockMovement.id)).where(StockMovement.movement_type == "adjustment")
+    ) == 2
+    assert session.scalar(
+        select(func.count(StockMovement.id)).where(StockMovement.movement_type.in_(("transfer_out", "transfer_in")))
+    ) == 2
+
+
+def test_receipt_then_transfer_matches_requested_balance_sequence(client, session, monkeypatch):
+    business_id = UUID("00000000-0000-0000-0000-000000000099")
+    source_id = UUID("00000000-0000-0000-0000-000000000091")
+    destination_id = UUID("00000000-0000-0000-0000-000000000092")
+    product_id = UUID("00000000-0000-0000-0000-000000000093")
+    session.add(Business(id=business_id, name="Sequence Test Shop"))
+    session.flush()
+    session.add_all(
+        [
+            Location(id=source_id, business_id=business_id, name="Shelf 2"),
+            Location(id=destination_id, business_id=business_id, name="Back Shelf"),
+            Product(id=product_id, business_id=business_id, name="Amul Butter", unit="packet"),
+        ]
+    )
+    session.flush()
+    session.add(
+        InventoryBalance(
+            business_id=business_id,
+            product_id=product_id,
+            location_id=source_id,
+            quantity=Decimal("20"),
+        )
+    )
+    session.commit()
+    monkeypatch.setattr("app.main.settings.dev_business_id", str(business_id))
+    headers = {"X-Dev-Token": "local-test-token"}
+
+    receipt = client.post(
+        "/api/v1/inventory/receipts",
+        headers=headers,
+        json={"product_id": str(product_id), "location_id": str(source_id), "quantity": "5"},
+    )
+    transfer = client.post(
+        "/api/v1/inventory/transfers",
+        headers=headers,
+        json={
+            "product_id": str(product_id),
+            "source_location_id": str(source_id),
+            "destination_location_id": str(destination_id),
+            "quantity": "2",
+        },
+    )
+    product = client.get("/api/v1/products", headers=headers).json()["items"][0]
+
+    assert receipt.status_code == 201
+    assert receipt.json()["quantity"] == "25.000"
+    assert transfer.status_code == 200
+    assert product["quantity"] == "25.000"
+    assert {balance["location_id"]: balance["quantity"] for balance in product["balances"]} == {
+        str(source_id): "23.000",
+        str(destination_id): "2.000",
+    }
+    assert session.scalar(
+        select(func.count(StockMovement.id)).where(StockMovement.business_id == business_id)
+    ) == 3
 
 
 def test_invalid_adjustment_location_unit_and_negative_balance_are_rejected(client, session):
@@ -483,6 +549,11 @@ def test_invalid_adjustment_location_unit_and_negative_balance_are_rejected(clie
         "quantity_change": "-21",
     }
     too_much = client.post("/api/v1/inventory/adjustments", headers=headers, json=payload)
+    zero = client.post(
+        "/api/v1/inventory/adjustments",
+        headers=headers,
+        json={**payload, "quantity_change": "0"},
+    )
     wrong_unit = client.post(
         "/api/v1/inventory/adjustments",
         headers=headers,
@@ -499,6 +570,7 @@ def test_invalid_adjustment_location_unit_and_negative_balance_are_rejected(clie
         json={**payload, "product_id": "00000000-0000-0000-0000-000000000021", "quantity_change": "1"},
     )
     assert too_much.status_code == 409
+    assert zero.status_code == 422
     assert wrong_unit.status_code == 422
     assert unknown_location.status_code == 404
     assert other_business.status_code == 404
@@ -544,6 +616,22 @@ def test_product_unit_cannot_change_after_stock_exists(client):
         json={"unit": "kg"},
     )
     assert response.status_code == 409
+
+
+def test_product_update_rejects_null_and_cross_business_ids(client):
+    headers = {"X-Dev-Token": "local-test-token"}
+    null_name = client.put(
+        "/api/v1/products/00000000-0000-0000-0000-000000000020",
+        headers=headers,
+        json={"name": None},
+    )
+    cross_tenant = client.put(
+        "/api/v1/products/00000000-0000-0000-0000-000000000021",
+        headers=headers,
+        json={"name": "Changed other tenant product"},
+    )
+    assert null_name.status_code == 422
+    assert cross_tenant.status_code == 404
 
 
 def test_insufficient_transfer_rolls_back_without_movement(client, session):

@@ -159,14 +159,19 @@ export default function Home() {
       const locationData = (await locationResponse.json()) as { items: InventoryLocation[] };
       setProducts(productData.items);
       setLocations(locationData.items);
-      setStockForm((current) => ({
-        ...current,
-        product_id: current.product_id || productData.items.find((product) => product.active)?.id || "",
-        unit: current.unit || productData.items.find((product) => product.id === current.product_id)?.unit || productData.items.find((product) => product.active)?.unit || "",
-        location_id: current.location_id || locationData.items[0]?.id || "",
-        source_location_id: current.source_location_id || locationData.items[0]?.id || "",
-        destination_location_id: current.destination_location_id || locationData.items.find((location) => location.id !== (current.source_location_id || locationData.items[0]?.id))?.id || "",
-      }));
+      setStockForm((current) => {
+        const selectedProduct = productData.items.find((product) => product.id === current.product_id && product.active)
+          ?? productData.items.find((product) => product.active);
+        const sourceId = current.source_location_id || locationData.items[0]?.id || "";
+        return {
+          ...current,
+          product_id: selectedProduct?.id ?? "",
+          unit: selectedProduct?.unit ?? "",
+          location_id: current.location_id || locationData.items[0]?.id || "",
+          source_location_id: sourceId,
+          destination_location_id: current.destination_location_id || locationData.items.find((location) => location.id !== sourceId)?.id || "",
+        };
+      });
     } catch (caught) {
       setInventoryError(caught instanceof Error ? caught.message : "Could not load inventory.");
     } finally {
@@ -657,7 +662,7 @@ export default function Home() {
                     <li key={product.id}>
                       <span>
                         <strong>{product.name}{!product.active && <span className="movement-type"> · inactive</span>}</strong>
-                        <small>{product.sku ? `SKU ${product.sku} · ` : ""}Minimum {formatQuantityLabel(product.minimum_stock, product.unit)} · {product.balances.length ? product.balances.map((balance) => `${balance.location_name}: ${formatQuantity(balance.quantity)}`).join(" · ") : "No location balance"} </small>
+                        <small>{product.sku ? `SKU ${product.sku} · ` : ""}Selling price ₹{product.selling_price} · Minimum {formatQuantityLabel(product.minimum_stock, product.unit)} · {product.balances.length ? product.balances.map((balance) => `${balance.location_name}: ${formatQuantity(balance.quantity)}`).join(" · ") : "No location balance"} </small>
                       </span>
                       <span className="product-total">{formatQuantityLabel(product.quantity, product.unit)}</span>
                       <button className="text-button" type="button" onClick={() => editProduct(product)}>Edit</button>

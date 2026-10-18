@@ -8,31 +8,36 @@ Status reflects code in this repository; “implemented” does not imply produc
 - **Backend foundation:** FastAPI app, health endpoint, SQLAlchemy engine/session setup, PostgreSQL URL configuration, and an initial Alembic migration are present.
 - **Inventory schema foundation:** business, membership, nested location, product, alias, per-location balance, and append-only movement tables are modeled with business-scoped foreign keys and constraints.
 - **Read-only multilingual lookup foundation:** Hindi/English/Hinglish phrase detection, Unicode normalization, aliases, fuzzy matching, ambiguity handling, and real database-backed location/quantity responses are implemented.
-- **Inventory API foundation:** development-only product/location creation, positive-quantity receipts, and atomic stock transfers with source row locking, per-location balances, and append-only movement records are implemented.
+- **Inventory API:** development-only product/location creation and reads, product edits, stock receipts, positive/negative stock adjustments, and atomic stock transfers are implemented. Inventory writes validate tenant-owned products/locations and units, lock the product and balance rows, persist balances and movement records in one transaction, and reject negative stock.
 - **Lookup regression tests:** equivalent supported English, Hinglish, and Devanagari alias queries; ambiguity, unknown product, missing location, multi-location stock, and empty input are covered.
-- **Inventory regression tests:** product/location creation, stock receipt, balanced transfer movements, insufficient-stock rollback, and caller-supplied tenant rejection are covered.
+- **Inventory regression tests:** product create/edit and tenant-scoped reads, location hierarchy reads, stock receipt/adjustments/transfers, movement history, invalid quantity/unit/location/tenant rejection, unit-change protection, forced transaction rollback, and exact quantity formatting are covered using SQLite.
 - **Dashboard:** tenant-scoped aggregates, low/out-of-stock counts, per-unit and per-location stock (without converting unlike units), low-stock alerts, and recent stock movement data are served from inventory records; unsupported sales and customer-credit metrics are omitted.
-- **Development UI:** responsive dashboard and existing text-query flow; browser speech recognition has language choices, transcript editing, listening/error/unsupported handling, and typed fallback. Optional answer speech includes a saved preference, unsupported-browser explanation, and stop control.
+- **Development UI:** responsive dashboard and inventory management forms for product creation/editing, receipts, adjustments, transfers, and location creation; successful mutations refresh the dashboard and inventory from the API. Existing text-query and voice flows remain available; browser speech recognition has language choices, transcript editing, listening/error/unsupported handling, and typed fallback. Optional answer speech includes a saved preference, unsupported-browser explanation, and stop control.
+- **Quantity display:** shared Decimal formatting avoids exponent notation and redundant trailing zeroes; UI formatting preserves large decimal strings, respects fractional quantities, and renders common unit plurals.
 - **Dashboard tests:** tenant-scoped inventory totals, mixed-unit grouping without combining incompatible quantities, low-stock alerts, recent movements, empty-business result, and omission of unsupported sales/credit metrics are covered.
 - **Browser smoke checks:** headless Chromium verified dashboard real-data/error/empty states, Hindi/Hinglish lookup, editable mock-recognition transcript, unsupported/denied/empty recognition fallbacks, and optional spoken-answer controls. Real microphone hardware and speech-engine accuracy are not verified.
 
 ## Partially implemented
 
 - **Tenant isolation:** schema and all API routes scope data by the business mapped to the development-only token. This is not user authentication, role-based authorization, or production-grade isolation.
-- **Inventory concurrency:** PostgreSQL row locks and uniqueness constraints protect existing balance updates and transfers; live PostgreSQL/concurrent-worker behavior has not been verified.
+- **Inventory concurrency:** product and existing balance rows are locked during stock mutations; unique business/product/location balance constraints handle competing first inserts. Live PostgreSQL and concurrent-worker behavior have not been verified.
 - **Migrations:** an initial migration exists and can be run with Alembic; migration execution against a live PostgreSQL service has not been verified in this environment.
 - **Local run/deploy setup:** Docker Compose and environment examples support local setup, but managed-service deployment is not performed or verified.
 
 ## Pending
 
 - Supabase or equivalent authentication, per-user membership/roles, production bearer-token validation, CSRF/rate limiting, and cross-business API security tests.
-- Stock adjustment, damage/expiry, returns, low-stock alert lifecycle, inventory UI, and concurrency verification against PostgreSQL.
+- Damage/expiry, returns, low-stock alert lifecycle, and concurrency verification against PostgreSQL.
 - Sales, idempotency, payments, customer credit ledger, suppliers, and purchases.
 - Real microphone hardware, actual browser permission dialogs, and Hindi/Hinglish recognition accuracy across devices have not been verified.
 - Onboarding, full inventory management UI, sales, customer udhaar, reports, pagination, and exports.
 - Optional LLM adapter, mutation confirmations, and command audit/retention controls.
 - Private file storage, upload validation, data export/deletion workflows, backup/restore verification, CI, and end-to-end browser tests.
 - Production frontend build/deployment and hosting-specific hardening.
+
+## Persistence verification limits
+
+The receipt and transfer write paths already used database transactions and movement rows; this task added the missing product-update and adjustment APIs and connected the frontend to real reads/writes. The automated regression suite verifies persisted balances and movements with an isolated in-memory SQLite database, including forced rollback. PostgreSQL persistence against the supplied Amul Butter/Shelf 2 records was not manually verified: no configured local database credentials or running local database service were available during this task. No demo seed, database reset, migration, or volume operation was performed. Use the local PostgreSQL database containing the stated records before running the requested +5 receipt / -2 transfer manual check.
 
 ## Security limitations
 

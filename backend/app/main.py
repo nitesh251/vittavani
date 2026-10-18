@@ -88,7 +88,7 @@ class StockAdjustment(BaseModel):
 
     product_id: UUID
     location_id: UUID
-    quantity_change: Decimal = Field(ne=0, max_digits=14, decimal_places=3)
+    quantity_change: Decimal = Field(max_digits=14, decimal_places=3)
     unit: str | None = Field(default=None, min_length=1, max_length=32)
     note: str | None = Field(default=None, max_length=500)
 
@@ -534,6 +534,8 @@ def update_product(
     changes = body.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422, detail="At least one product field must be provided")
+    if any(value is None for field, value in changes.items() if field != "sku"):
+        raise HTTPException(status_code=422, detail="Product fields cannot be null; use an empty alias list to clear aliases")
     if "name" in changes:
         changes["name"] = changes["name"].strip()
         if not changes["name"]:
@@ -710,12 +712,18 @@ def receive_stock(
             session.flush()
             total = balance.quantity
     except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="Inventory changed concurrently; retry the receipt") from exc
+        raise HTTPException(
+            status_code=409,
+            detail="Inventory changed concurrently; retry the receipt",
+        ) from exc
     return StockResult(
         product_id=product.id,
         quantity=str(total),
         unit=product.unit,
-        message=f"Received {format_quantity_label(body.quantity, product.unit)} of {product.name}. Balance at location: {format_quantity_label(total, product.unit)}.",
+        message=(
+            f"Received {format_quantity_label(body.quantity, product.unit)} of {product.name}. "
+            f"Balance at location: {format_quantity_label(total, product.unit)}."
+        ),
     )
 
 
@@ -725,6 +733,8 @@ def adjust_stock(
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> StockResult:
+    if body.quantity_change == 0:
+        raise HTTPException(status_code=422, detail="Adjustment quantity cannot be zero")
     try:
         with session.begin():
             product = _require_active_product(session, business_id, body.product_id)
@@ -769,12 +779,20 @@ def adjust_stock(
             session.flush()
             total = balance.quantity
     except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="Inventory changed concurrently; retry the adjustment") from exc
+        raise HTTPException(
+            status_code=409,
+            detail="Inventory changed concurrently; retry the adjustment",
+        ) from exc
     return StockResult(
         product_id=product.id,
         quantity=str(total),
         unit=product.unit,
-        message=f"Adjusted {product.name} by {format_quantity_label(abs(body.quantity_change), product.unit)} ({format_quantity(body.quantity_change)}). Balance at location: {format_quantity_label(total, product.unit)}.",
+        message=(
+            f"Adjusted {product.name} by "
+            f"{format_quantity_label(abs(body.quantity_change), product.unit)} "
+            f"({format_quantity(body.quantity_change)}). "
+            f"Balance at location: {format_quantity_label(total, product.unit)}."
+        ),
     )
 
 
@@ -785,7 +803,10 @@ def transfer_stock(
     session: Session = Depends(get_db),
 ) -> StockResult:
     if body.source_location_id == body.destination_location_id:
-        raise HTTPException(status_code=422, detail="Source and destination must be different locations")
+        raise HTTPException(
+            status_code=422,
+            detail="Source and destination must be different locations",
+        )
 
     try:
         with session.begin():
@@ -803,7 +824,10 @@ def transfer_stock(
                 .with_for_update()
             )
             if source is None or source.quantity < body.quantity:
-                raise HTTPException(status_code=409, detail="Insufficient stock at the source location")
+                raise HTTPException(
+                    status_code=409,
+                    detail="Insufficient stock at the source location",
+                )
             destination = session.scalar(
                 select(InventoryBalance)
                 .where(
@@ -843,10 +867,16 @@ def transfer_stock(
             session.flush()
             remaining = source.quantity
     except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="Inventory changed concurrently; retry the transfer") from exc
+        raise HTTPException(
+            status_code=409,
+            detail="Inventory changed concurrently; retry the transfer",
+        ) from exc
     return StockResult(
         product_id=product.id,
         quantity=str(remaining),
         unit=product.unit,
-        message=f"Moved {format_quantity_label(body.quantity, product.unit)} of {product.name}. Balance at source: {format_quantity_label(remaining, product.unit)}.",
+        message=(
+            f"Moved {format_quantity_label(body.quantity, product.unit)} of {product.name}. "
+            f"Balance at source: {format_quantity_label(remaining, product.unit)}."
+        ),
     )

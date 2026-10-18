@@ -22,6 +22,12 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 
 Run backend tests using `pytest` from `backend/`. Check frontend types with `npm run lint` and make a production build with `npm run build` from `frontend/`.
 
+## Inventory workflows
+
+The dashboard includes product creation/editing, storage-location creation, and stock receipt, adjustment, and transfer forms. Changes are sent to the FastAPI backend and the dashboard is refreshed from persisted API data after a successful write. Adjustments accept a signed quantity (negative reduces stock); the API rejects a balance below zero. Product units cannot be changed once inventory or movement history exists.
+
+The corresponding development-token-protected endpoints are `GET /api/v1/products`, `GET /api/v1/locations`, `PUT /api/v1/products/{product_id}`, `POST /api/v1/inventory/receipts`, `POST /api/v1/inventory/adjustments`, and `POST /api/v1/inventory/transfers`. No schema migration is required for these operations. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for test coverage and the limitation on live PostgreSQL verification.
+
 The demo seed is optional and does not run on app startup. To reset local development data, stop the database and remove its volume with `docker compose down -v`; this deletes local database contents.
 
 ## Environment
