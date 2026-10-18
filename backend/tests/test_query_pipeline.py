@@ -1,4 +1,6 @@
 from decimal import Decimal
+from io import BytesIO
+import json
 import sqlite3
 from uuid import UUID
 
@@ -9,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
+from app.ai_service import AIProviderError, extract_product_query
 from app.formatting import format_quantity, format_quantity_label
 from app.inventory_metrics import is_low_stock
 from app.main import app
@@ -267,7 +270,7 @@ def test_normal_search_uses_saved_hindi_alias_and_real_inventory(client):
 
     assert response.status_code == 200
     assert response.json()["product_name"] == "Amul Butter"
-    assert response.json()["quantity"] == "23"
+    assert response.json()["quantity"] == "23.000"
     assert response.json()["unit"] == "packet"
     assert "23 packets" in response.json()["message"]
 
@@ -288,7 +291,7 @@ def test_ai_mode_uses_mocked_interpretation_and_database_facts(client, monkeypat
     )
 
     assert response.status_code == 200
-    assert response.json()["quantity"] == "23"
+    assert response.json()["quantity"] == "23.000"
     assert response.json()["message"].startswith("Amul Butter: 23 packets available.")
     assert response.json()["provider"] == "groq"
     assert response.json()["model"] == "test-model"
@@ -315,7 +318,21 @@ def test_ai_mode_reports_unconfigured_provider_without_affecting_normal_search(c
     assert ai_response.status_code == 503
     assert "Normal Search" in ai_response.json()["detail"]
     assert normal_response.status_code == 200
-    assert normal_response.json()["quantity"] == "23"
+    assert normal_response.json()["quantity"] == "23.000"
+
+
+def test_ai_provider_rejects_non_object_json_responses(monkeypatch):
+    provider_response = json.dumps(
+        {"choices": [{"message": {"content": "[]"}}]}
+    ).encode()
+    monkeypatch.setattr("app.ai_service.ai_is_configured", lambda: True)
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: BytesIO(provider_response),
+    )
+
+    with pytest.raises(AIProviderError, match="invalid response"):
+        extract_product_query("How much butter is left?")
 
 
 def test_dashboard_reports_real_tenant_inventory_aggregates(client):

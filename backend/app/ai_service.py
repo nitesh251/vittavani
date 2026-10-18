@@ -59,6 +59,8 @@ def extract_product_query(question: str) -> dict[str, str | None]:
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         raise AIProviderError("AI Assistant returned an invalid response. Try Normal Search.") from exc
 
+    if not isinstance(parsed, dict):
+        raise AIProviderError("AI Assistant returned an invalid response. Try Normal Search.")
     intent = parsed.get("intent")
     product_query = parsed.get("product_query")
     if intent not in {"stock", "location", "low_stock", "unknown"}:

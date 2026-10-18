@@ -20,6 +20,7 @@ Status reflects code in this repository; “implemented” does not imply produc
 - **Quantity display:** shared Decimal formatting avoids exponent notation, redundant trailing zeroes, and floating-point conversion; APIs provide formatted unit labels with Indian digit grouping, and the UI displays those labels consistently.
 - Backend quantity-formatting and API label fields have regression coverage. Low-stock alerts are separate from out-of-stock counts and do not include zero balances.
 - **Dashboard tests:** tenant-scoped inventory totals, mixed-unit grouping without combining incompatible quantities, low-stock alerts, recent movements, empty-business result, and omission of unsupported sales/credit metrics are covered.
+- **Authentication and assistant tests:** API requests reject missing and invalid development tokens; Normal Search uses the saved Hindi alias and persisted test balances; AI mode uses a mocked interpretation against database facts, reports missing configuration without disabling Normal Search, and rejects malformed provider JSON.
 - **Browser smoke checks:** headless Chromium verified dashboard real-data/error/empty states, Hindi/Hinglish lookup, editable mock-recognition transcript, unsupported/denied/empty recognition fallbacks, and optional spoken-answer controls. Real microphone hardware and speech-engine accuracy are not verified.
 
 ## Partially implemented
