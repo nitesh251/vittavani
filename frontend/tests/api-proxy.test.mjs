@@ -41,6 +41,18 @@ test("rejects unsupported methods with an Allow header", async () => {
   assert.equal(response.headers.get("allow"), "GET");
 });
 
+test("returns 404 for inherited property names", async () => {
+  for (const path of [["constructor"], ["__proto__"]]) {
+    const response = await proxyApiRequest(
+      request(path[0]),
+      path,
+      development,
+      fetch,
+    );
+    assert.equal(response.status, 404);
+  }
+});
+
 test("rejects writes without an Origin header", async () => {
   const response = await proxyApiRequest(
     request("inventory/receipts", "POST"),
@@ -81,7 +93,7 @@ test("forwards same-origin requests with the backend token", async () => {
   let forwardedUrl;
   let forwardedOptions;
   const response = await proxyApiRequest(
-    request("inventory/receipts", "POST", {
+    request("inventory/receipts?unexpected=1", "POST", {
       origin: "http://app.local",
       "content-type": "application/json",
     }),
@@ -99,4 +111,20 @@ test("forwards same-origin requests with the backend token", async () => {
   assert.equal(forwardedUrl, "http://inventory.local/api/v1/inventory/receipts");
   assert.equal(forwardedOptions.headers.get("X-Dev-Token"), "test-only-token");
   assert.equal(forwardedOptions.headers.get("content-type"), "application/json");
+});
+
+test("preserves supported stock-history query parameters", async () => {
+  let forwardedUrl;
+  const response = await proxyApiRequest(
+    request("stock-movements?limit=5"),
+    ["stock-movements"],
+    development,
+    async (url) => {
+      forwardedUrl = url;
+      return Response.json({ items: [] });
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(forwardedUrl, "http://inventory.local/api/v1/stock-movements?limit=5");
 });

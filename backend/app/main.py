@@ -15,7 +15,7 @@ from app.ai_service import AIProviderError, ai_is_configured, extract_product_qu
 from app.config import settings
 from app.database import get_db
 from app.formatting import format_quantity, format_quantity_label
-from app.inventory_metrics import inventory_totals_subquery, is_low_stock
+from app.inventory_metrics import inventory_totals_subquery, is_low_stock, is_out_of_stock
 from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
@@ -253,7 +253,7 @@ def _product_stock_status(product: Product, quantity: Decimal) -> Literal[
 ]:
     if not product.active:
         return "inactive"
-    if quantity <= 0:
+    if is_out_of_stock(quantity):
         return "out_of_stock"
     return "low_stock" if is_low_stock(quantity, product.minimum_stock) else "in_stock"
 
@@ -349,7 +349,7 @@ def dashboard(
         for product, quantity in products
         if is_low_stock(quantity, product.minimum_stock)
     ]
-    out_of_stock_count = sum(1 for _, quantity in products if quantity <= 0)
+    out_of_stock_count = sum(1 for _, quantity in products if is_out_of_stock(quantity))
     overall_by_unit: dict[str, Decimal] = {}
     for product, quantity in products:
         overall_by_unit[product.unit] = overall_by_unit.get(product.unit, Decimal("0")) + quantity

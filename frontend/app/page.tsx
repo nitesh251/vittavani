@@ -137,6 +137,21 @@ function productDetails(product: InventoryProduct, locationNames: Map<string, st
   ].filter(Boolean).join(" · ");
 }
 
+function compareDecimalStrings(left: string, right: string) {
+  const precision = Math.max(left.split(".")[1]?.length ?? 0, right.split(".")[1]?.length ?? 0);
+  const scale = BigInt(`1${"0".repeat(precision)}`);
+  const toScaledInteger = (value: string) => {
+    const negative = value.startsWith("-");
+    const [whole, fraction = ""] = (negative ? value.slice(1) : value).split(".");
+    const fractional = BigInt(fraction.padEnd(precision, "0") || "0");
+    const amount = BigInt(whole || "0") * scale + fractional;
+    return negative ? -amount : amount;
+  };
+  const leftValue = toScaledInteger(left);
+  const rightValue = toScaledInteger(right);
+  return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+}
+
 function Metric({
   label,
   value,
@@ -515,7 +530,7 @@ export default function Home() {
       return matchesSearch && matchesStatus;
     })
     .sort((left, right) => productSort === "quantity"
-      ? Number(right.quantity) - Number(left.quantity) || left.name.localeCompare(right.name)
+      ? compareDecimalStrings(right.quantity, left.quantity) || left.name.localeCompare(right.name)
       : left.name.localeCompare(right.name));
   const aiStatusMessage = aiStatusError
     ? aiStatusError

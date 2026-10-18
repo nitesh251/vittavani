@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.ai_service import AIProviderError, extract_product_query
 from app.formatting import format_quantity, format_quantity_label
-from app.inventory_metrics import is_low_stock
+from app.inventory_metrics import is_low_stock, is_out_of_stock
 from app.main import app
 from app.models import Business, InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
@@ -220,6 +220,9 @@ def test_low_stock_rule_ignores_zero_threshold_and_out_of_stock():
     assert is_low_stock(Decimal("2"), Decimal("5"))
     assert not is_low_stock(Decimal("0"), Decimal("5"))
     assert not is_low_stock(Decimal("1"), Decimal("0"))
+    assert is_out_of_stock(Decimal("0"))
+    assert is_out_of_stock(Decimal("-1"))
+    assert not is_out_of_stock(Decimal("0.001"))
 
 
 @pytest.mark.parametrize(
@@ -867,7 +870,7 @@ def test_stock_receipt_adjustments_and_transfer_preserve_total_and_record_moveme
 
 
 def test_receipt_then_transfer_matches_requested_balance_sequence(client, session, monkeypatch):
-    business_id = UUID("00000000-0000-0000-0000-000000000099")
+    business_id = UUID("00000000-0000-0000-0000-000000000098")
     source_id = UUID("00000000-0000-0000-0000-000000000091")
     destination_id = UUID("00000000-0000-0000-0000-000000000092")
     product_id = UUID("00000000-0000-0000-0000-000000000093")

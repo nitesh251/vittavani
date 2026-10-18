@@ -39,8 +39,11 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
   }
 
   const endpoint = path.join("/");
-  const methods = endpointMethods[endpoint]
-    ?? (/^products\/[0-9a-f-]{36}$/i.test(endpoint) ? ["PUT"] : undefined);
+  const methods = Object.prototype.hasOwnProperty.call(endpointMethods, endpoint)
+    ? endpointMethods[endpoint]
+    : /^products\/[0-9a-f-]{36}$/i.test(endpoint)
+      ? ["PUT"]
+      : undefined;
   if (!methods) {
     return Response.json({ detail: "API route not found" }, { status: 404 });
   }
@@ -81,8 +84,9 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
   if (contentType) headers.set("content-type", contentType);
 
   try {
+    const query = endpoint === "stock-movements" ? new URL(request.url).search : "";
     const response = await fetcher(
-      `${apiUrl}/api/v1/${path.map(encodeURIComponent).join("/")}${new URL(request.url).search}`,
+      `${apiUrl}/api/v1/${path.map(encodeURIComponent).join("/")}${query}`,
       {
         method: request.method,
         headers,

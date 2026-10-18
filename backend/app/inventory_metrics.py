@@ -8,7 +8,11 @@ from app.models import InventoryBalance
 
 
 def is_low_stock(available: Decimal, minimum_stock: Decimal) -> bool:
-    return minimum_stock > 0 and 0 < available <= minimum_stock
+    return minimum_stock > 0 and not is_out_of_stock(available) and available <= minimum_stock
+
+
+def is_out_of_stock(available: Decimal) -> bool:
+    return available <= 0
 
 
 def inventory_totals_subquery(business_id: UUID) -> Subquery:
