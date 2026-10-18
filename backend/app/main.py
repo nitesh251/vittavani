@@ -1,5 +1,7 @@
 import secrets
+from contextlib import contextmanager
 from decimal import Decimal
+from typing import Iterator
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -116,6 +118,7 @@ class ProductBalance(BaseModel):
     location_id: UUID
     location_name: str
     quantity: str
+    display_quantity: str
 
 
 class ProductResponse(BaseModel):
@@ -128,6 +131,8 @@ class ProductResponse(BaseModel):
     active: bool
     aliases: list[str]
     quantity: str
+    display_quantity: str
+    display_minimum_stock: str
     balances: list[ProductBalance]
 
 
@@ -146,17 +151,30 @@ class LocationList(BaseModel):
     items: list[LocationResponse]
 
 
+@contextmanager
+def _transaction(session: Session) -> Iterator[None]:
+    try:
+        yield
+        session.commit()
+    except BaseException:
+        session.rollback()
+        raise
+
+
 class DashboardProduct(BaseModel):
     id: UUID
     name: str
     quantity: str
     unit: str
     minimum_stock: str
+    display_quantity: str
+    display_minimum_stock: str
 
 
 class DashboardUnitTotal(BaseModel):
     unit: str
     quantity: str
+    display_quantity: str
 
 
 class DashboardLocation(BaseModel):
@@ -172,6 +190,7 @@ class DashboardActivity(BaseModel):
     product_name: str
     quantity: str
     unit: str
+    display_quantity: str
     source_location: str | None
     destination_location: str | None
     created_at: str
@@ -254,6 +273,8 @@ def dashboard(
             quantity=str(quantity),
             unit=product.unit,
             minimum_stock=str(product.minimum_stock),
+            display_quantity=format_quantity_label(quantity, product.unit),
+            display_minimum_stock=format_quantity_label(product.minimum_stock, product.unit),
         )
         for product, quantity in products
         if product.minimum_stock > 0 and 0 < quantity <= product.minimum_stock
@@ -267,7 +288,11 @@ def dashboard(
         unit: quantity for unit, quantity in overall_by_unit.items() if quantity > 0
     }
     stock_by_unit = [
-        DashboardUnitTotal(unit=unit, quantity=str(quantity))
+        DashboardUnitTotal(
+            unit=unit,
+            quantity=str(quantity),
+            display_quantity=format_quantity_label(quantity, unit),
+        )
         for unit, quantity in sorted(on_hand_by_unit.items())
     ]
 
@@ -306,7 +331,11 @@ def dashboard(
         )
         location_total["product_count"] += product_count
         location_total["stock_by_unit"].append(
-            DashboardUnitTotal(unit=unit, quantity=str(quantity))
+            DashboardUnitTotal(
+                unit=unit,
+                quantity=str(quantity),
+                display_quantity=format_quantity_label(quantity, unit),
+            )
         )
     locations = [DashboardLocation(**location) for location in location_totals.values()]
 
@@ -346,6 +375,7 @@ def dashboard(
             product_name=product_name,
             quantity=str(movement.quantity_change),
             unit=unit,
+            display_quantity=format_quantity_label(movement.quantity_change, unit),
             source_location=source_name,
             destination_location=destination_name,
             created_at=movement.created_at.isoformat(),
@@ -372,16 +402,25 @@ def list_products(
     products = session.scalars(
         select(Product).where(Product.business_id == business_id).order_by(Product.name)
     ).all()
-    balances = session.execute(
-        select(InventoryBalance, Location.name)
-        .join(
-            Location,
-            (Location.business_id == InventoryBalance.business_id)
-            & (Location.id == InventoryBalance.location_id),
-        )
-        .where(InventoryBalance.business_id == business_id)
-        .order_by(Location.name)
-    ).all()
+    product_ids = [product.id for product in products]
+    product_units = {product.id: product.unit for product in products}
+    balances = (
+        session.execute(
+            select(InventoryBalance, Location.name)
+            .join(
+                Location,
+                (Location.business_id == InventoryBalance.business_id)
+                & (Location.id == InventoryBalance.location_id),
+            )
+            .where(
+                InventoryBalance.business_id == business_id,
+                InventoryBalance.product_id.in_(product_ids),
+            )
+            .order_by(Location.name)
+        ).all()
+        if product_ids
+        else []
+    )
     by_product: dict[UUID, list[ProductBalance]] = {}
     quantities: dict[UUID, Decimal] = {}
     for balance, location_name in balances:
@@ -390,12 +429,24 @@ def list_products(
                 location_id=balance.location_id,
                 location_name=location_name,
                 quantity=str(balance.quantity),
+                display_quantity=format_quantity_label(
+                    balance.quantity, product_units[balance.product_id]
+                ),
             )
         )
         quantities[balance.product_id] = quantities.get(balance.product_id, Decimal("0")) + balance.quantity
-    aliases = session.scalars(
-        select(ProductAlias).where(ProductAlias.business_id == business_id).order_by(ProductAlias.alias)
-    ).all()
+    aliases = (
+        session.scalars(
+            select(ProductAlias)
+            .where(
+                ProductAlias.business_id == business_id,
+                ProductAlias.product_id.in_(product_ids),
+            )
+            .order_by(ProductAlias.alias)
+        ).all()
+        if product_ids
+        else []
+    )
     aliases_by_product: dict[UUID, list[str]] = {}
     for alias in aliases:
         aliases_by_product.setdefault(alias.product_id, []).append(alias.alias)
@@ -411,6 +462,10 @@ def list_products(
                 active=product.active,
                 aliases=aliases_by_product.get(product.id, []),
                 quantity=str(quantities.get(product.id, Decimal("0"))),
+                display_quantity=format_quantity_label(
+                    quantities.get(product.id, Decimal("0")), product.unit
+                ),
+                display_minimum_stock=format_quantity_label(product.minimum_stock, product.unit),
                 balances=by_product.get(product.id, []),
             )
             for product in products
@@ -450,7 +505,7 @@ def create_location(
     if not name:
         raise HTTPException(status_code=422, detail="Location name cannot be blank")
     try:
-        with session.begin():
+        with _transaction(session):
             if body.parent_location_id is not None:
                 parent = session.scalar(
                     select(Location).where(
@@ -494,7 +549,7 @@ def create_product(
         raise HTTPException(status_code=422, detail="SKU cannot be blank")
 
     try:
-        with session.begin():
+        with _transaction(session):
             product = Product(
                 business_id=business_id,
                 name=name,
@@ -547,7 +602,7 @@ def update_product(
             raise HTTPException(status_code=422, detail="Product aliases must be unique")
 
     try:
-        with session.begin():
+        with _transaction(session):
             product = session.scalar(
                 select(Product)
                 .where(Product.business_id == business_id, Product.id == product_id)
@@ -622,11 +677,14 @@ def _product_response(session: Session, business_id: UUID, product: Product) -> 
         active=product.active,
         aliases=list(aliases),
         quantity=str(total),
+        display_quantity=format_quantity_label(total, product.unit),
+        display_minimum_stock=format_quantity_label(product.minimum_stock, product.unit),
         balances=[
             ProductBalance(
                 location_id=balance.location_id,
                 location_name=location_name,
                 quantity=str(balance.quantity),
+                display_quantity=format_quantity_label(balance.quantity, product.unit),
             )
             for balance, location_name in balance_rows
         ],
@@ -667,7 +725,7 @@ def receive_stock(
     session: Session = Depends(get_db),
 ) -> StockResult:
     try:
-        with session.begin():
+        with _transaction(session):
             product = _require_active_product(session, business_id, body.product_id)
             _validate_unit(product, body.unit)
             _require_location(session, business_id, body.location_id)
@@ -728,7 +786,7 @@ def adjust_stock(
     if body.quantity_change == 0:
         raise HTTPException(status_code=422, detail="Adjustment quantity cannot be zero")
     try:
-        with session.begin():
+        with _transaction(session):
             product = _require_active_product(session, business_id, body.product_id)
             _validate_unit(product, body.unit)
             _require_location(session, business_id, body.location_id)
@@ -801,7 +859,7 @@ def transfer_stock(
         )
 
     try:
-        with session.begin():
+        with _transaction(session):
             product = _require_active_product(session, business_id, body.product_id)
             _validate_unit(product, body.unit)
             _require_location(session, business_id, body.source_location_id)

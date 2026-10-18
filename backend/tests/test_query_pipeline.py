@@ -219,7 +219,7 @@ def test_out_of_stock_product_is_reported_separately_from_low_stock(session):
         (Decimal("20.000"), "20"),
         (Decimal("0"), "0"),
         (Decimal("0.125"), "0.125"),
-        (Decimal("100000000000000000000000.125"), "100000000000000000000000.125"),
+        (Decimal("100000000000000000000000.125"), "1,00,00,00,00,00,00,00,00,00,00,000.125"),
         (Decimal("-0.500"), "-0.5"),
     ],
 )
@@ -254,12 +254,16 @@ def test_dashboard_reports_real_tenant_inventory_aggregates(client):
     data = response.json()
     assert data["product_count"] == 1
     assert data["total_stock_units"] == "23.000"
-    assert data["stock_by_unit"] == [{"unit": "packet", "quantity": "23.000"}]
+    assert data["stock_by_unit"] == [
+        {"unit": "packet", "quantity": "23.000", "display_quantity": "23 packets"}
+    ]
     assert data["low_stock_count"] == 0
     assert data["out_of_stock_count"] == 0
     assert {location["name"]: location["stock_by_unit"] for location in data["stock_by_location"]} == {
-        "Storeroom": [{"unit": "packet", "quantity": "3.000"}],
-        "Storeroom > Rack B > Shelf 2": [{"unit": "packet", "quantity": "20.000"}],
+        "Storeroom": [{"unit": "packet", "quantity": "3.000", "display_quantity": "3 packets"}],
+        "Storeroom > Rack B > Shelf 2": [
+            {"unit": "packet", "quantity": "20.000", "display_quantity": "20 packets"}
+        ],
     }
     assert data["recent_stock_activity"] == []
     assert "today_sales" not in data
@@ -311,6 +315,8 @@ def test_dashboard_reports_low_stock_and_recent_activity(client, session):
     assert data["out_of_stock_count"] == 1
     assert data["low_stock_products"][0]["name"] == "Milk"
     assert data["low_stock_products"][0]["quantity"] == "2.000"
+    assert data["low_stock_products"][0]["display_quantity"] == "2 packets"
+    assert data["recent_stock_activity"][0]["display_quantity"] == "2 packets"
     assert data["recent_stock_activity"][0]["product_name"] == "Milk"
 
 
@@ -354,14 +360,14 @@ def test_dashboard_keeps_different_units_separate(client, session):
     data = response.json()
 
     assert data["stock_by_unit"] == [
-        {"unit": "bag", "quantity": "4.000"},
-        {"unit": "packet", "quantity": "23.000"},
+        {"unit": "bag", "quantity": "4.000", "display_quantity": "4 bags"},
+        {"unit": "packet", "quantity": "23.000", "display_quantity": "23 packets"},
     ]
     assert data["total_stock_units"] is None
     storeroom = next(item for item in data["stock_by_location"] if item["name"] == "Storeroom")
     assert storeroom["stock_by_unit"] == [
-        {"unit": "bag", "quantity": "4.000"},
-        {"unit": "packet", "quantity": "3.000"},
+        {"unit": "bag", "quantity": "4.000", "display_quantity": "4 bags"},
+        {"unit": "packet", "quantity": "3.000", "display_quantity": "3 packets"},
     ]
 
 
@@ -444,6 +450,8 @@ def test_product_create_update_and_inventory_reads_are_persisted_and_tenant_scop
     assert updated.json()["name"] == "Basmati Rice"
     assert updated.json()["selling_price"] == "56.00"
     assert format_quantity(Decimal(updated.json()["minimum_stock"])) == "3"
+    assert updated.json()["display_quantity"] == "0 bags"
+    assert updated.json()["display_minimum_stock"] == "3 bags"
     assert updated.json()["aliases"] == ["चावल"]
     same_alias_update = client.put(
         f"/api/v1/products/{product_id}",
@@ -476,6 +484,9 @@ def test_stock_receipt_adjustments_and_transfer_preserve_total_and_record_moveme
     )
     assert receipt.status_code == 201
     assert "25 packets" in receipt.json()["message"]
+    balances = client.get("/api/v1/products", headers=headers).json()["items"][0]["balances"]
+    shelf_balance = next(balance for balance in balances if balance["location_id"] == shelf_id)
+    assert shelf_balance["display_quantity"] == "25 packets"
 
     adjustment_up = client.post(
         "/api/v1/inventory/adjustments",
@@ -570,6 +581,7 @@ def test_receipt_then_transfer_matches_requested_balance_sequence(client, sessio
     assert receipt.json()["quantity"] == "25.000"
     assert transfer.status_code == 200
     assert product["quantity"] == "25.000"
+    assert product["display_quantity"] == "25 packets"
     assert {balance["location_id"]: balance["quantity"] for balance in product["balances"]} == {
         str(source_id): "23.000",
         str(destination_id): "2.000",
@@ -645,6 +657,38 @@ def test_receipt_rolls_back_balance_when_movement_persistence_fails(client, sess
         )
     ) == Decimal("20.000")
     assert session.scalar(select(func.count(StockMovement.id))) == 0
+
+
+def test_stock_write_commits_when_dependency_has_already_started_transaction(client, session):
+    original_dependency = app.dependency_overrides[get_db]
+
+    def dependency_with_read():
+        with Session(session.get_bind()) as request_session:
+            request_session.scalar(select(Product.id).where(Product.business_id == BUSINESS_ID))
+            yield request_session
+
+    app.dependency_overrides[get_db] = dependency_with_read
+    try:
+        response = client.post(
+            "/api/v1/inventory/receipts",
+            headers={"X-Dev-Token": "local-test-token"},
+            json={
+                "product_id": "00000000-0000-0000-0000-000000000020",
+                "location_id": "00000000-0000-0000-0000-000000000012",
+                "quantity": "1",
+            },
+        )
+    finally:
+        app.dependency_overrides[get_db] = original_dependency
+
+    assert response.status_code == 201
+    assert session.scalar(
+        select(InventoryBalance.quantity).where(
+            InventoryBalance.business_id == BUSINESS_ID,
+            InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+            InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000012"),
+        )
+    ) == Decimal("21.000")
 
 
 def test_product_unit_cannot_change_after_stock_exists(client):

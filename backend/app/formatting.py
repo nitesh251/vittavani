@@ -8,9 +8,21 @@ def format_quantity(value: Decimal) -> str:
     if value == 0:
         return "0"
     formatted = format(value, "f")
+    sign = ""
+    if formatted.startswith("-"):
+        sign, formatted = "-", formatted[1:]
+    whole, separator, fraction = formatted.partition(".")
+    if len(whole) > 3:
+        prefix, last_three = whole[:-3], whole[-3:]
+        groups = []
+        while len(prefix) > 2:
+            groups.insert(0, prefix[-2:])
+            prefix = prefix[:-2]
+        groups.insert(0, prefix)
+        whole = f"{','.join(groups)},{last_three}"
     if "." in formatted:
-        formatted = formatted.rstrip("0").rstrip(".")
-    return formatted
+        fraction = fraction.rstrip("0")
+    return f"{sign}{whole}{separator if fraction else ''}{fraction}"
 
 
 def format_quantity_label(value: Decimal, unit: str) -> str:

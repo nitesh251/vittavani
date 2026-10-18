@@ -13,8 +13,9 @@ Status reflects code in this repository; “implemented” does not imply produc
 - **Inventory regression tests:** product create/edit and tenant-scoped reads, location hierarchy reads, stock receipt/adjustments/transfers, movement history, invalid quantity/unit/location/tenant rejection, unit-change protection, forced transaction rollback, and exact quantity formatting are covered using SQLite.
 - **Dashboard:** tenant-scoped aggregates, low/out-of-stock counts, per-unit and per-location stock (without converting unlike units), low-stock alerts, and recent stock movement data are served from inventory records; unsupported sales and customer-credit metrics are omitted.
 - **Development UI:** responsive dashboard and inventory management forms for product creation/editing, receipts, adjustments, transfers, and location creation; successful mutations refresh the dashboard and inventory from the API. Existing text-query and voice flows remain available; browser speech recognition has language choices, transcript editing, listening/error/unsupported handling, and typed fallback. Optional answer speech includes a saved preference, unsupported-browser explanation, and stop control.
-- **Quantity display:** shared Decimal formatting avoids exponent notation and redundant trailing zeroes; UI formatting preserves large decimal strings, respects fractional quantities, and renders common unit plurals.
-- Backend and frontend quantity utilities maintain corresponding common English unit-plural mappings; low-stock alerts are separate from out-of-stock counts and do not include zero balances.
+- **Server-side API proxy:** the Next.js same-origin API route attaches the development token server-side; the token is not embedded in or sent by the browser bundle.
+- **Quantity display:** shared Decimal formatting avoids exponent notation, redundant trailing zeroes, and floating-point conversion; APIs provide formatted unit labels with Indian digit grouping, and the UI displays those labels consistently.
+- Backend quantity-formatting and API label fields have regression coverage. Low-stock alerts are separate from out-of-stock counts and do not include zero balances.
 - **Dashboard tests:** tenant-scoped inventory totals, mixed-unit grouping without combining incompatible quantities, low-stock alerts, recent movements, empty-business result, and omission of unsupported sales/credit metrics are covered.
 - **Browser smoke checks:** headless Chromium verified dashboard real-data/error/empty states, Hindi/Hinglish lookup, editable mock-recognition transcript, unsupported/denied/empty recognition fallbacks, and optional spoken-answer controls. Real microphone hardware and speech-engine accuracy are not verified.
 
@@ -31,14 +32,14 @@ Status reflects code in this repository; “implemented” does not imply produc
 - Damage/expiry, returns, low-stock alert lifecycle, and concurrency verification against PostgreSQL.
 - Sales, idempotency, payments, customer credit ledger, suppliers, and purchases.
 - Real microphone hardware, actual browser permission dialogs, and Hindi/Hinglish recognition accuracy across devices have not been verified.
-- Onboarding, full inventory management UI, sales, customer udhaar, reports, pagination, and exports.
+- Onboarding, sales, customer udhaar, reports, product/location pagination, and exports.
 - Optional LLM adapter, mutation confirmations, and command audit/retention controls.
 - Private file storage, upload validation, data export/deletion workflows, backup/restore verification, CI, and end-to-end browser tests.
 - Production frontend build/deployment and hosting-specific hardening.
 
 ## Persistence verification limits
 
-The receipt and transfer write paths already used database transactions and movement rows; this task added the missing product-update and adjustment APIs and connected the frontend to real reads/writes. The automated regression suite verifies persisted balances and movements with an isolated in-memory SQLite database, including forced rollback. PostgreSQL persistence against the supplied Amul Butter/Shelf 2 records was not manually verified: no configured local database credentials or running local database service were available during this task. No demo seed, database reset, migration, or volume operation was performed. Use the local PostgreSQL database containing the stated records before running the requested +5 receipt / -2 transfer manual check.
+The receipt and transfer write paths already used database transactions and movement rows; this task added the missing product-update and adjustment APIs and connected the frontend to real reads/writes. The regression suite verifies persisted balances and movements with isolated in-memory SQLite, including forced rollback. A separate disposable-SQLite smoke test exercised the same-origin Next.js proxy through a +5 receipt and -2 transfer (20 → 25 total; 23 at source and 2 at destination), and confirmed the development token was absent from rendered HTML. PostgreSQL persistence against the supplied Amul Butter/Shelf 2 records was not manually verified: no configured local database credentials or running local database service were available during this task. No demo seed, database reset, migration, or volume operation was performed. Use the local PostgreSQL database containing the stated records before running the requested manual check.
 
 ## Security limitations
 
@@ -48,4 +49,4 @@ All non-health API routes require the explicit development token in the `X-Dev-T
 
 Copy `.env.example` to `.env`, then run `docker compose up -d db`, `cd backend && python -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'`, `alembic upgrade head`, and `python -m app.seed_demo`. Start the API with `uvicorn app.main:app --reload` from `backend/`; start the web app with `cd frontend && npm install && npm run dev`. Run backend tests from `backend/` using `pytest`.
 
-The frontend API URL, backend database URL, development token, business ID, environment mode, and allowed frontend origin are configured using `.env.example`. Never put real secrets in source control.
+Backend defaults and the local development token are documented in `.env.example`; the frontend API URL and matching server-side development token belong in ignored `frontend/.env.local`. Never put real secrets in source control or `NEXT_PUBLIC_*` variables.

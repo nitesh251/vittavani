@@ -16,7 +16,7 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 4. Apply migrations: `alembic upgrade head` from `backend/`.
 5. Create the optional sample data explicitly: `python -m app.seed_demo` from `backend/`. This command refuses non-development mode or an already existing configured business.
 6. Start the API: `uvicorn app.main:app --reload` from `backend/`.
-7. Configure the web app's local API token in the frontend environment. For local-only testing create `frontend/.env.local` with `NEXT_PUBLIC_API_URL=http://localhost:8000` and `NEXT_PUBLIC_DEV_API_TOKEN` set to the same value as `DEV_API_TOKEN`. `.env.local` is ignored by Git. The development-only token is sent from the browser only in Next.js development mode; never configure it in a production build.
+7. Configure the web app's local API connection in `frontend/.env.local`: set `NEXT_PUBLIC_API_URL=http://localhost:8000` and `DEV_API_TOKEN` to the same local-only value as the backend. `.env.local` is ignored by Git. A same-origin Next.js route attaches the token server-side during development; it is not sent in the browser bundle.
 8. Install and start the frontend: `npm install && npm run dev` from `frontend/`.
 9. Open `http://localhost:3000`. Health check: `http://localhost:8000/health`.
 
@@ -32,11 +32,11 @@ The demo seed is optional and does not run on app startup. To reset local develo
 
 ## Environment
 
-See `.env.example` for backend defaults. `APP_ENV`, `DATABASE_URL`, `DEV_API_TOKEN`, `DEV_BUSINESS_ID`, and `FRONTEND_ORIGIN` are backend settings. The frontend reads `NEXT_PUBLIC_API_URL` and, in this development-only prototype, `NEXT_PUBLIC_DEV_API_TOKEN` from `frontend/.env.local`. Never place production secrets in `NEXT_PUBLIC_*` variables.
+See `.env.example` for backend defaults. `APP_ENV`, `DATABASE_URL`, `DEV_API_TOKEN`, `DEV_BUSINESS_ID`, and `FRONTEND_ORIGIN` are backend settings. The frontend reads the backend URL from `NEXT_PUBLIC_API_URL`; its same-origin route reads `DEV_API_TOKEN` server-side in development. Never place production secrets in `NEXT_PUBLIC_*` variables.
 
 ## Deployment and operations
 
-No service is deployed by this repository. For production, provision PostgreSQL and hosting separately, configure TLS and secret variables in the hosting provider, and replace the local token with a maintained authentication provider and server-side JWT verification before exposing tenant data. Do not deploy the development seed, client-visible development token, or current API as a production multi-user service.
+No service is deployed by this repository. For production, provision PostgreSQL and hosting separately, configure TLS and secret variables in the hosting provider, and replace the local token with a maintained authentication provider and server-side JWT verification before exposing tenant data. Do not deploy the development seed, development token, or current API as a production multi-user service.
 
 Backup, restore, storage, managed authentication, and production deployment procedures remain pending; see the implementation status. Do not assume provider pricing or free-tier limits—verify them before provisioning resources.
 

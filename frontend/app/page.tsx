@@ -1,8 +1,6 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { formatQuantity, formatQuantityLabel } from "./formatQuantity";
-
 type Answer = {
   message: string;
   original_query: string;
@@ -13,17 +11,18 @@ type Answer = {
 type Dashboard = {
   product_count: number;
   total_stock_units: string | null;
-  stock_by_unit: { unit: string; quantity: string }[];
+  stock_by_unit: { unit: string; quantity: string; display_quantity: string }[];
   low_stock_count: number;
   out_of_stock_count: number;
-  low_stock_products: { id: string; name: string; quantity: string; unit: string; minimum_stock: string }[];
-  stock_by_location: { id: string; name: string; product_count: number; stock_by_unit: { unit: string; quantity: string }[] }[];
+  low_stock_products: { id: string; name: string; quantity: string; unit: string; minimum_stock: string; display_quantity: string; display_minimum_stock: string }[];
+  stock_by_location: { id: string; name: string; product_count: number; stock_by_unit: { unit: string; quantity: string; display_quantity: string }[] }[];
   recent_stock_activity: {
     id: string;
     movement_type: string;
     product_name: string;
     quantity: string;
     unit: string;
+    display_quantity: string;
     source_location: string | null;
     destination_location: string | null;
     created_at: string;
@@ -40,7 +39,9 @@ type InventoryProduct = {
   active: boolean;
   aliases: string[];
   quantity: string;
-  balances: { location_id: string; location_name: string; quantity: string }[];
+  display_quantity: string;
+  display_minimum_stock: string;
+  balances: { location_id: string; location_name: string; quantity: string; display_quantity: string }[];
 };
 
 type InventoryLocation = { id: string; name: string; full_name: string; parent_location_id: string | null };
@@ -67,13 +68,7 @@ type SpeechWindow = Window & {
 };
 
 const examples = ["Amul butter kahan rakha hai?", "अमूल बटर कितना बचा है?", "Show low stock items."];
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const devToken =
-  process.env.NODE_ENV === "development" ? process.env.NEXT_PUBLIC_DEV_API_TOKEN : undefined;
-const headers = {
-  "Content-Type": "application/json",
-  ...(devToken ? { "X-Dev-Token": devToken } : {}),
-};
+const headers = { "Content-Type": "application/json" };
 
 function movementLabel(value: string) {
   return value.replaceAll("_", " ");
@@ -82,7 +77,7 @@ function movementLabel(value: string) {
 function productBalanceSummary(product: InventoryProduct) {
   return product.balances.length
     ? product.balances
-        .map((balance) => `${balance.location_name}: ${formatQuantity(balance.quantity)}`)
+        .map((balance) => `${balance.location_name}: ${balance.display_quantity}`)
         .join(" · ")
     : "No location balance";
 }
@@ -92,7 +87,7 @@ function productDetails(product: InventoryProduct) {
   return [
     sku,
     `Selling price ₹${product.selling_price}`,
-    `Minimum ${formatQuantityLabel(product.minimum_stock, product.unit)}`,
+    `Minimum ${product.display_minimum_stock}`,
     productBalanceSummary(product),
   ].filter(Boolean).join(" · ");
 }
@@ -133,7 +128,7 @@ export default function Home() {
   const [inventoryWriteError, setInventoryWriteError] = useState("");
   const [writing, setWriting] = useState(false);
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
-  const [productForm, setProductForm] = useState({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "" });
+  const [productForm, setProductForm] = useState({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "", active: true });
   const [stockMode, setStockMode] = useState("receipt");
   const [stockForm, setStockForm] = useState({ product_id: "", location_id: "", source_location_id: "", destination_location_id: "", quantity: "", unit: "", note: "" });
   const [locationForm, setLocationForm] = useState({ name: "", parent_location_id: "" });
@@ -150,7 +145,7 @@ export default function Home() {
     setDashboardLoading(true);
     setDashboardError("");
     try {
-      const response = await fetch(`${apiUrl}/api/v1/dashboard`, { headers });
+      const response = await fetch("/api/v1/dashboard", { headers });
       if (!response.ok) {
         throw new Error(response.status === 401 ? "Development API token is missing or invalid." : "Could not load inventory summary.");
       }
@@ -167,8 +162,8 @@ export default function Home() {
     setInventoryError("");
     try {
       const [productResponse, locationResponse] = await Promise.all([
-        fetch(`${apiUrl}/api/v1/products`, { headers }),
-        fetch(`${apiUrl}/api/v1/locations`, { headers }),
+        fetch("/api/v1/products", { headers }),
+        fetch("/api/v1/locations", { headers }),
       ]);
       if (!productResponse.ok || !locationResponse.ok) {
         const failed = !productResponse.ok ? productResponse : locationResponse;
@@ -216,7 +211,7 @@ export default function Home() {
     setInventoryNotice("");
     setInventoryWriteError("");
     try {
-      const response = await fetch(`${apiUrl}${path}`, { method, headers, body: JSON.stringify(body) });
+      const response = await fetch(path, { method, headers, body: JSON.stringify(body) });
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { detail?: string };
         throw new Error(data.detail ?? `Could not save inventory changes (${response.status}).`);
@@ -241,12 +236,13 @@ export default function Home() {
       selling_price: productForm.selling_price,
       minimum_stock: productForm.minimum_stock,
       aliases: productForm.aliases.split(",").map((alias) => alias.trim()).filter(Boolean),
+      ...(editingProduct ? { active: productForm.active } : {}),
     };
     const path = editingProduct ? `/api/v1/products/${editingProduct}` : "/api/v1/products";
     void writeInventory(path, editingProduct ? "PUT" : "POST", payload, editingProduct ? "Product updated." : "Product created.").then((saved) => {
       if (saved) {
         setEditingProduct(null);
-        setProductForm({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "" });
+        setProductForm({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "", active: true });
       }
     });
   }
@@ -260,16 +256,18 @@ export default function Home() {
       selling_price: product.selling_price,
       minimum_stock: product.minimum_stock,
       aliases: product.aliases.join(", "),
+      active: product.active,
     });
   }
 
-  function saveStock(event: FormEvent<HTMLFormElement>) {
+  async function saveStock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const shared = { product_id: stockForm.product_id, quantity: stockForm.quantity, unit: stockForm.unit, note: stockForm.note || null };
+    let saved: boolean;
     if (stockMode === "receipt") {
-      void writeInventory("/api/v1/inventory/receipts", "POST", { ...shared, location_id: stockForm.location_id }, "Stock received and saved.");
+      saved = await writeInventory("/api/v1/inventory/receipts", "POST", { ...shared, location_id: stockForm.location_id }, "Stock received and saved.");
     } else if (stockMode === "adjustment") {
-      void writeInventory("/api/v1/inventory/adjustments", "POST", {
+      saved = await writeInventory("/api/v1/inventory/adjustments", "POST", {
         product_id: stockForm.product_id,
         location_id: stockForm.location_id,
         quantity_change: stockForm.quantity,
@@ -277,11 +275,14 @@ export default function Home() {
         note: stockForm.note || null,
       }, "Stock adjustment saved.");
     } else {
-      void writeInventory("/api/v1/inventory/transfers", "POST", {
+      saved = await writeInventory("/api/v1/inventory/transfers", "POST", {
         ...shared,
         source_location_id: stockForm.source_location_id,
         destination_location_id: stockForm.destination_location_id,
       }, "Stock transfer saved.");
+    }
+    if (saved) {
+      setStockForm((current) => ({ ...current, quantity: "", note: "" }));
     }
   }
 
@@ -306,7 +307,7 @@ export default function Home() {
     setAnswer(null);
     setLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/v1/ask`, {
+      const response = await fetch("/api/v1/ask", {
         method: "POST",
         headers,
         body: JSON.stringify({ query }),
@@ -445,13 +446,19 @@ export default function Home() {
             <button className="text-button" type="button" onClick={() => void loadDashboard()}>Try again</button>
           </div>
         )}
-        {!dashboardLoading && !dashboardError && dashboard && dashboard.product_count === 0 && (
+        {!dashboardLoading && !dashboardError && !inventoryLoading && !inventoryError && dashboard && dashboard.product_count === 0 && products.length === 0 && (
           <div className="dashboard-state empty-state">
             <strong>Your inventory is ready when you are.</strong>
             <span>No products have been added yet, so there are no stock totals or alerts to show.</span>
           </div>
         )}
-        {!dashboardLoading && !dashboardError && dashboard && dashboard.product_count > 0 && (
+        {!dashboardLoading && !dashboardError && !inventoryLoading && !inventoryError && dashboard && dashboard.product_count === 0 && products.length > 0 && (
+          <div className="dashboard-state empty-state">
+            <strong>No active products.</strong>
+            <span>Your catalogue has products, but none are active for dashboard stock totals. Edit a product below to activate it.</span>
+          </div>
+        )}
+        {!dashboardLoading && !dashboardError && dashboard && (dashboard.product_count > 0 || (!inventoryLoading && !inventoryError && products.length > 0)) && (
           <>
             <div className="metrics-grid" aria-label="Inventory summary">
               <Metric label="Products / SKUs" value={String(dashboard.product_count)} detail="Active products in your catalogue" />
@@ -459,14 +466,14 @@ export default function Home() {
                 label="Stock on hand"
                 value={
                   dashboard.stock_by_unit.length === 1
-                    ? formatQuantityLabel(dashboard.stock_by_unit[0].quantity, dashboard.stock_by_unit[0].unit)
+                    ? dashboard.stock_by_unit[0].display_quantity
                     : dashboard.stock_by_unit.length > 1
                       ? "Mixed units"
                       : "0"
                 }
                 detail={
                   dashboard.stock_by_unit.length > 1
-                    ? `${dashboard.stock_by_unit.map((stock) => formatQuantityLabel(stock.quantity, stock.unit)).join(" · ")} — units kept separate`
+                    ? `${dashboard.stock_by_unit.map((stock) => stock.display_quantity).join(" · ")} — units kept separate`
                     : dashboard.stock_by_unit.length === 1
                       ? "On hand across recorded locations"
                       : "No stock currently recorded"
@@ -500,8 +507,8 @@ export default function Home() {
                   <ul className="data-list">
                     {dashboard.low_stock_products.map((product) => (
                       <li key={product.id}>
-                        <span><strong>{product.name}</strong><small>Minimum {formatQuantityLabel(product.minimum_stock, product.unit)}</small></span>
-                        <span className="stock-quantity">{formatQuantityLabel(product.quantity, product.unit)}</span>
+                        <span><strong>{product.name}</strong><small>Minimum {product.display_minimum_stock}</small></span>
+                        <span className="stock-quantity">{product.display_quantity}</span>
                       </li>
                     ))}
                   </ul>
@@ -521,7 +528,7 @@ export default function Home() {
                     {dashboard.stock_by_location.map((location) => (
                       <li key={location.id}>
                         <span><strong>{location.name}</strong><small>{location.product_count} {location.product_count === 1 ? "product" : "products"}</small></span>
-                        <span className="stock-quantity">{location.stock_by_unit.map((stock) => formatQuantityLabel(stock.quantity, stock.unit)).join(" · ") || "0 units"}</span>
+                        <span className="stock-quantity">{location.stock_by_unit.map((stock) => stock.display_quantity).join(" · ") || "0 units"}</span>
                       </li>
                     ))}
                   </ul>
@@ -548,7 +555,7 @@ export default function Home() {
                           {movement.destination_location ?? movement.source_location ?? "Location not recorded"}
                         </small>
                       </span>
-                      <span className="stock-quantity">{formatQuantityLabel(movement.quantity, movement.unit)}</span>
+                      <span className="stock-quantity">{movement.display_quantity}</span>
                     </li>
                   ))}
                 </ul>
@@ -603,9 +610,10 @@ export default function Home() {
                     <label>Minimum stock<input type="number" min="0" step="0.001" required value={productForm.minimum_stock} onChange={(event) => setProductForm({ ...productForm, minimum_stock: event.target.value })} /></label>
                   </div>
                   <label>Search aliases (comma-separated)<input value={productForm.aliases} onChange={(event) => setProductForm({ ...productForm, aliases: event.target.value })} placeholder="Hindi, Hinglish, or alternate names" /></label>
+                  {editingProduct && <label>Status<select value={productForm.active ? "active" : "inactive"} onChange={(event) => setProductForm({ ...productForm, active: event.target.value === "active" })}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>}
                   <div className="form-actions">
                     <button className="submit" type="submit" disabled={writing}>{writing ? "Saving…" : editingProduct ? "Save product" : "Add product"}</button>
-                    {editingProduct && <button className="refresh-button" type="button" onClick={() => { setEditingProduct(null); setProductForm({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "" }); }}>Cancel</button>}
+                    {editingProduct && <button className="refresh-button" type="button" onClick={() => { setEditingProduct(null); setProductForm({ name: "", sku: "", unit: "packet", selling_price: "0", minimum_stock: "0", aliases: "", active: true }); }}>Cancel</button>}
                   </div>
                 </form>
               </section>
@@ -683,7 +691,7 @@ export default function Home() {
                         <strong>{product.name}{!product.active && <span className="movement-type"> · inactive</span>}</strong>
                         <small>{productDetails(product)}</small>
                       </span>
-                      <span className="product-total">{formatQuantityLabel(product.quantity, product.unit)}</span>
+                      <span className="product-total">{product.display_quantity}</span>
                       <button className="text-button" type="button" onClick={() => editProduct(product)}>Edit</button>
                     </li>
                   ))}
