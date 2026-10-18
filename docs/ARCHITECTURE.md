@@ -28,6 +28,8 @@ The Next.js home page combines database-derived catalogue/stock totals, grouped 
 
 In development, the same-origin Next.js API proxy attaches `X-Dev-Token` using the server environment variable `DEV_API_TOKEN`. Do not use a `NEXT_PUBLIC_*` variable for the token; rename any legacy frontend setting to `DEV_API_TOKEN`. The backend's root `.env` remains authoritative for token validation.
 
+The development-token proxy rejects protected API calls outside `next dev`; production use requires a separate production authentication and authorization implementation.
+
 ## Deployment and security
 
 Use PostgreSQL and a managed identity provider/JWT verification layer before production exposure. Do not enable the development bearer token in production. Configure secrets through the hosting platform, restrict CORS to the actual frontend origin, and use TLS. Schema changes are managed with Alembic, not `create_all()`. See `IMPLEMENTATION_STATUS.md` for unimplemented security and operational controls.

@@ -55,19 +55,26 @@ async function forward(request: NextRequest, context: RouteContext) {
   const headers = new Headers({ accept: "application/json" });
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
-  if (process.env.NODE_ENV === "development") {
-    const devToken = process.env.DEV_API_TOKEN;
-    if (!devToken) {
-      return Response.json(
-        {
-          detail:
-            "Frontend development token is not configured. Set DEV_API_TOKEN in frontend/.env.local and restart Next.js.",
-        },
-        { status: 503 },
-      );
-    }
-    headers.set("X-Dev-Token", devToken);
+  if (process.env.NODE_ENV !== "development") {
+    return Response.json(
+      {
+        detail:
+          "The development-token proxy is disabled outside Next.js development mode. Production authentication is not configured.",
+      },
+      { status: 503 },
+    );
   }
+  const devToken = process.env.DEV_API_TOKEN;
+  if (!devToken) {
+    return Response.json(
+      {
+        detail:
+          "Frontend development token is not configured. Set DEV_API_TOKEN in frontend/.env.local and restart Next.js.",
+      },
+      { status: 503 },
+    );
+  }
+  headers.set("X-Dev-Token", devToken);
 
   try {
     const response = await fetch(

@@ -136,6 +136,7 @@ class ProductResponse(BaseModel):
     selling_price: str
     minimum_stock: str
     active: bool
+    stock_status: Literal["in_stock", "low_stock", "out_of_stock", "inactive"]
     aliases: list[str]
     quantity: str
     display_quantity: str
@@ -245,6 +246,16 @@ def development_business_id(dev_token: str | None = Header(default=None, alias="
         return UUID(settings.dev_business_id)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail="Protected API is not configured") from exc
+
+
+def _product_stock_status(product: Product, quantity: Decimal) -> Literal[
+    "in_stock", "low_stock", "out_of_stock", "inactive"
+]:
+    if not product.active:
+        return "inactive"
+    if quantity <= 0:
+        return "out_of_stock"
+    return "low_stock" if is_low_stock(quantity, product.minimum_stock) else "in_stock"
 
 
 @app.post("/api/v1/ask", response_model=AskResponse)
@@ -534,6 +545,9 @@ def list_products(
                 selling_price=str(product.selling_price),
                 minimum_stock=str(product.minimum_stock),
                 active=product.active,
+                stock_status=_product_stock_status(
+                    product, quantities.get(product.id, Decimal("0"))
+                ),
                 aliases=aliases_by_product.get(product.id, []),
                 quantity=str(quantities.get(product.id, Decimal("0"))),
                 display_quantity=format_quantity_label(
@@ -807,6 +821,7 @@ def _product_response(session: Session, business_id: UUID, product: Product) -> 
         selling_price=str(product.selling_price),
         minimum_stock=str(product.minimum_stock),
         active=product.active,
+        stock_status=_product_stock_status(product, total),
         aliases=list(aliases),
         quantity=str(total),
         display_quantity=format_quantity_label(total, product.unit),

@@ -430,6 +430,17 @@ def test_ai_provider_rejects_non_object_json_responses(monkeypatch):
         extract_product_query("How much butter is left?")
 
 
+def test_ai_provider_rejects_oversized_responses(monkeypatch):
+    monkeypatch.setattr("app.ai_service.ai_is_configured", lambda: True)
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: BytesIO(b"x" * 32_769),
+    )
+
+    with pytest.raises(AIProviderError, match="oversized response"):
+        extract_product_query("How much butter is left?")
+
+
 def test_dashboard_reports_real_tenant_inventory_aggregates(client):
     assert client.get("/api/v1/dashboard").status_code == 401
     response = client.get("/api/v1/dashboard", headers={"X-Dev-Token": "local-test-token"})
@@ -528,6 +539,61 @@ def test_stock_movement_history_returns_tenant_scoped_location_paths(client, ses
     assert movement["source_location"] == "Storeroom > Rack B > Shelf 2"
     assert movement["destination_location"] == "Storeroom"
     assert movement["note"] == "Reorganized"
+
+
+def test_product_api_reports_backend_calculated_stock_status(client, session):
+    low_stock = Product(
+        id=UUID("00000000-0000-0000-0000-000000000075"),
+        business_id=BUSINESS_ID,
+        name="Milk",
+        unit="packet",
+        minimum_stock=Decimal("5"),
+    )
+    out_of_stock = Product(
+        id=UUID("00000000-0000-0000-0000-000000000076"),
+        business_id=BUSINESS_ID,
+        name="Bread",
+        unit="loaf",
+        minimum_stock=Decimal("3"),
+    )
+    inactive = Product(
+        id=UUID("00000000-0000-0000-0000-000000000077"),
+        business_id=BUSINESS_ID,
+        name="Old item",
+        unit="box",
+        minimum_stock=Decimal("2"),
+        active=False,
+    )
+    session.add_all([low_stock, out_of_stock, inactive])
+    session.flush()
+    session.add_all(
+        [
+            InventoryBalance(
+                business_id=BUSINESS_ID,
+                product_id=low_stock.id,
+                location_id=UUID("00000000-0000-0000-0000-000000000010"),
+                quantity=Decimal("2"),
+            ),
+            InventoryBalance(
+                business_id=BUSINESS_ID,
+                product_id=inactive.id,
+                location_id=UUID("00000000-0000-0000-0000-000000000010"),
+                quantity=Decimal("2"),
+            ),
+        ]
+    )
+    session.commit()
+
+    response = client.get("/api/v1/products", headers={"X-Dev-Token": "local-test-token"})
+
+    assert response.status_code == 200
+    statuses = {item["name"]: item["stock_status"] for item in response.json()["items"]}
+    assert statuses == {
+        "Amul Butter": "in_stock",
+        "Bread": "out_of_stock",
+        "Milk": "low_stock",
+        "Old item": "inactive",
+    }
 
 
 def test_dashboard_returns_zero_counts_for_empty_business(client, session, monkeypatch):

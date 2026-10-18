@@ -61,6 +61,8 @@ See `.env.example` for backend defaults. `APP_ENV`, `DATABASE_URL`, `DEV_API_TOK
 
 No service is deployed by this repository. For production, provision PostgreSQL and hosting separately, configure TLS and secret variables in the hosting provider, and replace the local token with a maintained authentication provider and server-side JWT verification before exposing tenant data. Do not deploy the development seed, development token, or current API as a production multi-user service.
 
+The Next.js proxy intentionally refuses protected API requests outside `next dev`; `next start` is only a frontend build smoke check until production authentication and a production API authorization flow are implemented.
+
 Backup, restore, storage, managed authentication, and production deployment procedures remain pending; see the implementation status. Do not assume provider pricing or free-tier limits—verify them before provisioning resources.
 
 ## License

@@ -85,6 +85,10 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 39px); }
 .product-list li { gap: 14px; }
 .product-list li > span:first-child { flex: 1; }
 .product-total { flex-shrink: 0; color: var(--green-dark); font-weight: 700; white-space: nowrap; }
+.stock-status { display: inline-flex; width: fit-content; margin-top: 4px; border-radius: 20px; padding: 3px 8px; background: #edf5ef; color: #2f6547; font-size: 10px; font-weight: 700; }
+.stock-status-low_stock { background: #fff7e8; color: #805221; }
+.stock-status-out_of_stock { background: #fff0f0; color: #8c2828; }
+.stock-status-inactive { background: #f0f2f1; color: #65736b; }
 .inventory-toolbar { display: grid; grid-template-columns: minmax(220px, 1.5fr) repeat(2, minmax(150px, .7fr)); gap: 12px; margin: 0 0 8px; }
 .inventory-toolbar label { display: grid; gap: 6px; color: #385448; font-size: 12px; font-weight: 600; }
 .inventory-toolbar input, .inventory-toolbar select { width: 100%; min-height: 41px; border: 1px solid #d7e2db; border-radius: 8px; padding: 8px 10px; background: white; color: var(--ink); font-size: 13px; }

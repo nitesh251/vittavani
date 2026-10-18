@@ -52,6 +52,7 @@ type InventoryProduct = {
   selling_price: string;
   minimum_stock: string;
   active: boolean;
+  stock_status: "in_stock" | "low_stock" | "out_of_stock" | "inactive";
   aliases: string[];
   quantity: string;
   display_quantity: string;
@@ -83,6 +84,12 @@ type SpeechWindow = Window & {
 };
 
 const examples = ["Amul butter kahan rakha hai?", "अमूल बटर कितना बचा है?", "Show low stock items."];
+const stockStatusLabels = {
+  in_stock: "In stock",
+  low_stock: "Low stock",
+  out_of_stock: "Out of stock",
+  inactive: "Inactive",
+};
 const headers = { "Content-Type": "application/json" };
 const emptyProductForm = {
   name: "",
@@ -481,15 +488,17 @@ export default function Home() {
       ].some((value) => value.toLocaleLowerCase().includes(search));
       const quantity = Number(product.quantity);
       const matchesStatus = productStatusFilter === "all"
-        || (productStatusFilter === "in-stock" && quantity > 0)
-        || (productStatusFilter === "low-stock" && quantity > 0 && Number(product.minimum_stock) > 0 && quantity <= Number(product.minimum_stock))
-        || (productStatusFilter === "out-of-stock" && quantity <= 0)
-        || (productStatusFilter === "inactive" && !product.active);
+        || product.stock_status === productStatusFilter.replaceAll("-", "_");
       return matchesSearch && matchesStatus;
     })
     .sort((left, right) => productSort === "quantity"
       ? Number(right.quantity) - Number(left.quantity) || left.name.localeCompare(right.name)
       : left.name.localeCompare(right.name));
+  const aiStatusMessage = aiStatusError
+    ? aiStatusError
+    : aiConfigured
+      ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Stock facts are still fetched from your inventory.`
+      : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search.";
 
   return (
     <main className="page">
@@ -790,7 +799,8 @@ export default function Home() {
                   {visibleProducts.map((product) => (
                     <li key={product.id}>
                       <span>
-                        <strong>{product.name}{!product.active && <span className="movement-type"> · inactive</span>}</strong>
+                        <strong>{product.name}</strong>
+                        <span className={`stock-status stock-status-${product.stock_status}`}>{stockStatusLabels[product.stock_status]}</span>
                         <small>{productDetails(product, locationNames)}</small>
                       </span>
                       <span className="product-total">{product.display_quantity}</span>
@@ -856,12 +866,8 @@ export default function Home() {
         </div>
         <p className={`ai-status${assistantMode === "ai" && !aiConfigured ? " ai-unavailable" : ""}`} role="status">
           {assistantMode === "normal"
-            ? "Normal Search uses deterministic product and alias matching; no AI service is required."
-              : aiStatusError
-                ? aiStatusError
-              : aiConfigured
-                ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Stock facts are still fetched from your inventory.`
-              : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search."}
+              ? "Normal Search uses deterministic product and alias matching; no AI service is required."
+              : aiStatusMessage}
         </p>
         <form className="ask-card" onSubmit={submit}>
           <label htmlFor="business-query">What would you like to know?</label>

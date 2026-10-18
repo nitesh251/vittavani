@@ -4,6 +4,8 @@ from urllib.request import Request, urlopen
 
 from app.config import settings
 
+_MAX_PROVIDER_RESPONSE_BYTES = 32_768
+
 
 class AIProviderError(Exception):
     pass
@@ -50,7 +52,10 @@ def extract_product_query(question: str) -> dict[str, str | None]:
     )
     try:
         with urlopen(request, timeout=max(1, min(settings.ai_timeout_seconds, 30))) as response:
-            payload = json.loads(response.read(32_768))
+            response_body = response.read(_MAX_PROVIDER_RESPONSE_BYTES + 1)
+        if len(response_body) > _MAX_PROVIDER_RESPONSE_BYTES:
+            raise AIProviderError("AI Assistant returned an oversized response. Try Normal Search.")
+        payload = json.loads(response_body)
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         raise AIProviderError("AI Assistant is temporarily unavailable. Try Normal Search.") from exc
     try:
