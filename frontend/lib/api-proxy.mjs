@@ -84,9 +84,14 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
   if (contentType) headers.set("content-type", contentType);
 
   try {
-    const query = endpoint === "stock-movements" ? new URL(request.url).search : "";
+    const queryParams = new URLSearchParams();
+    if (endpoint === "stock-movements") {
+      const requestedLimit = new URL(request.url).searchParams.get("limit");
+      if (requestedLimit !== null) queryParams.set("limit", requestedLimit);
+    }
+    const queryString = queryParams.size ? `?${queryParams}` : "";
     const response = await fetcher(
-      `${apiUrl}/api/v1/${path.map(encodeURIComponent).join("/")}${query}`,
+      `${apiUrl}/api/v1/${path.map(encodeURIComponent).join("/")}${queryString}`,
       {
         method: request.method,
         headers,

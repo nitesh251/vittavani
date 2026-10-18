@@ -127,7 +127,10 @@ def lookup_product(
         for balance, location in balances
         if balance.quantity > 0
     )
-    total = sum((balance.quantity for balance, _ in balances), start=Decimal("0"))
+    totals = inventory_totals_subquery(business_id)
+    total = session.scalar(
+        select(totals.c.quantity).where(totals.c.product_id == product.id)
+    ) or Decimal("0")
     if query.intent == Intent.LOCATION:
         message = (
             f"{product.name} is at {', '.join(locations)}."

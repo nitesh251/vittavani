@@ -116,7 +116,7 @@ test("forwards same-origin requests with the backend token", async () => {
 test("preserves supported stock-history query parameters", async () => {
   let forwardedUrl;
   const response = await proxyApiRequest(
-    request("stock-movements?limit=5"),
+    request("stock-movements?limit=5&unexpected=1"),
     ["stock-movements"],
     development,
     async (url) => {

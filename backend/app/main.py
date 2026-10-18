@@ -258,6 +258,29 @@ def _product_stock_status(product: Product, quantity: Decimal) -> Literal[
     return "low_stock" if is_low_stock(quantity, product.minimum_stock) else "in_stock"
 
 
+def _serialize_product(
+    product: Product,
+    quantity: Decimal,
+    aliases: list[str],
+    balances: list[ProductBalance],
+) -> ProductResponse:
+    return ProductResponse(
+        id=product.id,
+        name=product.name,
+        sku=product.sku,
+        unit=product.unit,
+        selling_price=str(product.selling_price),
+        minimum_stock=str(product.minimum_stock),
+        active=product.active,
+        stock_status=_product_stock_status(product, quantity),
+        aliases=aliases,
+        quantity=str(quantity),
+        display_quantity=format_quantity_label(quantity, product.unit),
+        display_minimum_stock=format_quantity_label(product.minimum_stock, product.unit),
+        balances=balances,
+    )
+
+
 @app.post("/api/v1/ask", response_model=AskResponse)
 def ask(
     body: AskRequest,
@@ -529,24 +552,11 @@ def list_products(
         aliases_by_product.setdefault(alias.product_id, []).append(alias.alias)
     return ProductList(
         items=[
-            ProductResponse(
-                id=product.id,
-                name=product.name,
-                sku=product.sku,
-                unit=product.unit,
-                selling_price=str(product.selling_price),
-                minimum_stock=str(product.minimum_stock),
-                active=product.active,
-                stock_status=_product_stock_status(
-                    product, quantities.get(product.id, Decimal("0"))
-                ),
-                aliases=aliases_by_product.get(product.id, []),
-                quantity=str(quantities.get(product.id, Decimal("0"))),
-                display_quantity=format_quantity_label(
-                    quantities.get(product.id, Decimal("0")), product.unit
-                ),
-                display_minimum_stock=format_quantity_label(product.minimum_stock, product.unit),
-                balances=by_product.get(product.id, []),
+            _serialize_product(
+                product,
+                quantities.get(product.id, Decimal("0")),
+                aliases_by_product.get(product.id, []),
+                by_product.get(product.id, []),
             )
             for product in products
         ]
@@ -805,29 +815,16 @@ def _product_response(session: Session, business_id: UUID, product: Product) -> 
         .order_by(ProductAlias.alias)
     ).all()
     total = sum((balance.quantity for balance, _ in balance_rows), Decimal("0"))
-    return ProductResponse(
-        id=product.id,
-        name=product.name,
-        sku=product.sku,
-        unit=product.unit,
-        selling_price=str(product.selling_price),
-        minimum_stock=str(product.minimum_stock),
-        active=product.active,
-        stock_status=_product_stock_status(product, total),
-        aliases=list(aliases),
-        quantity=str(total),
-        display_quantity=format_quantity_label(total, product.unit),
-        display_minimum_stock=format_quantity_label(product.minimum_stock, product.unit),
-        balances=[
-            ProductBalance(
-                location_id=balance.location_id,
-                location_name=location_name,
-                quantity=str(balance.quantity),
-                display_quantity=format_quantity_label(balance.quantity, product.unit),
-            )
-            for balance, location_name in balance_rows
-        ],
-    )
+    product_balances = [
+        ProductBalance(
+            location_id=balance.location_id,
+            location_name=location_name,
+            quantity=str(balance.quantity),
+            display_quantity=format_quantity_label(balance.quantity, product.unit),
+        )
+        for balance, location_name in balance_rows
+    ]
+    return _serialize_product(product, total, list(aliases), product_balances)
 
 
 def _require_active_product(session: Session, business_id: UUID, product_id: UUID) -> Product:
