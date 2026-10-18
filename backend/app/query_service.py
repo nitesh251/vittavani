@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.formatting import format_quantity_label
-from app.inventory_metrics import is_low_stock
+from app.inventory_metrics import inventory_totals_subquery, is_low_stock
 from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias
 from app.query_understanding import Candidate, Intent, Query, resolve_product, understand_query
@@ -44,15 +44,7 @@ def lookup_product(
         )
     )
     if query.intent == Intent.LOW_STOCK:
-        totals = (
-            select(
-                InventoryBalance.product_id.label("product_id"),
-                func.sum(InventoryBalance.quantity).label("quantity"),
-            )
-            .where(InventoryBalance.business_id == business_id)
-            .group_by(InventoryBalance.product_id)
-            .subquery()
-        )
+        totals = inventory_totals_subquery(business_id)
         products = session.execute(
             select(Product, func.coalesce(totals.c.quantity, 0).label("quantity"))
             .outerjoin(totals, totals.c.product_id == Product.id)

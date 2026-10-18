@@ -12,6 +12,7 @@ Vittavani uses a small modular monolith: a Next.js/TypeScript web client calls a
 - `backend/app/query_service.py`: database-backed product lookup and answer construction.
 - `backend/app/main.py`: development-token-scoped dashboard aggregates, product/location creation, and transactional stock receipt/transfer routes.
 - `backend/app/ai_service.py`: optional Groq-backed structured query interpretation; provider output is validated and never supplies inventory facts or SQL.
+- `backend/app/inventory_metrics.py`: shared tenant-scoped quantity aggregation and canonical low-stock rule used by inventory search and dashboard APIs.
 - `backend/alembic/`: versioned database schema changes.
 
 Every business-owned model carries a `business_id`; foreign keys and compound uniqueness constraints keep associations within a business. Database lookups must always include the authorized business scope. The initial development-token seam is not production authentication; protected development API routes are disabled outside development mode.

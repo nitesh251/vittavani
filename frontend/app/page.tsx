@@ -178,6 +178,8 @@ export default function Home() {
   const [productSort, setProductSort] = useState("name");
   const [inventoryLoading, setInventoryLoading] = useState(true);
   const [inventoryError, setInventoryError] = useState("");
+  const [movementLoading, setMovementLoading] = useState(true);
+  const [movementError, setMovementError] = useState("");
   const [inventoryNotice, setInventoryNotice] = useState("");
   const [inventoryWriteError, setInventoryWriteError] = useState("");
   const [writing, setWriting] = useState(false);
@@ -211,38 +213,56 @@ export default function Home() {
     }
   }, []);
 
+  const loadAssistantStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/v1/ai/status", { headers });
+      if (!response.ok) throw new Error("Could not check AI availability.");
+      const data = (await response.json()) as { configured: boolean; provider: string | null; model: string | null };
+      setAiConfigured(data.configured);
+      setAiProvider(data.provider ?? "");
+      setAiModel(data.model ?? "");
+      setAiStatusError("");
+    } catch {
+      setAiConfigured(false);
+      setAiProvider("");
+      setAiModel("");
+      setAiStatusError("AI availability could not be checked. Normal Search remains available.");
+    }
+  }, []);
+
+  const loadStockMovements = useCallback(async () => {
+    setMovementLoading(true);
+    setMovementError("");
+    try {
+      const response = await fetch("/api/v1/stock-movements?limit=100", { headers });
+      if (!response.ok) {
+        throw new Error(await apiError(response, "Could not load stock history."));
+      }
+      const data = (await response.json()) as { items: StockMovement[] };
+      setStockMovements(data.items);
+    } catch (caught) {
+      setMovementError(caught instanceof Error ? caught.message : "Could not load stock history.");
+    } finally {
+      setMovementLoading(false);
+    }
+  }, []);
+
   const loadInventory = useCallback(async () => {
     setInventoryLoading(true);
     setInventoryError("");
     try {
-      const [productResponse, locationResponse, movementResponse, aiResponse] = await Promise.all([
+      const [productResponse, locationResponse] = await Promise.all([
         fetch("/api/v1/products", { headers }),
         fetch("/api/v1/locations", { headers }),
-        fetch("/api/v1/stock-movements?limit=100", { headers }),
-        fetch("/api/v1/ai/status", { headers }).catch(() => null),
       ]);
-      const failed = [productResponse, locationResponse, movementResponse].find((response) => !response.ok);
+      const failed = [productResponse, locationResponse].find((response) => !response.ok);
       if (failed) {
-        throw new Error(await apiError(failed, "Could not load products and inventory history."));
+        throw new Error(await apiError(failed, "Could not load products and locations."));
       }
       const productData = (await productResponse.json()) as { items: InventoryProduct[] };
       const locationData = (await locationResponse.json()) as { items: InventoryLocation[] };
-      const movementData = (await movementResponse.json()) as { items: StockMovement[] };
       setProducts(productData.items);
       setLocations(locationData.items);
-      setStockMovements(movementData.items);
-      if (aiResponse?.ok) {
-        const aiData = (await aiResponse.json()) as { configured: boolean; provider: string | null; model: string | null };
-        setAiConfigured(aiData.configured);
-        setAiProvider(aiData.provider ?? "");
-        setAiModel(aiData.model ?? "");
-        setAiStatusError("");
-      } else {
-        setAiConfigured(false);
-        setAiProvider("");
-        setAiModel("");
-        setAiStatusError("AI availability could not be checked. Normal Search remains available.");
-      }
       setStockForm((current) => {
         const selectedProduct = productData.items.find((product) => product.id === current.product_id && product.active)
           ?? productData.items.find((product) => product.active);
@@ -266,6 +286,8 @@ export default function Home() {
   useEffect(() => {
     void loadDashboard();
     void loadInventory();
+    void loadStockMovements();
+    void loadAssistantStatus();
     setSpeakAnswers(window.localStorage.getItem("vittavani-speak-answers") === "true");
     setSpeechOutputSupported(
       "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined",
@@ -274,7 +296,7 @@ export default function Home() {
       recognitionRef.current?.abort();
       window.speechSynthesis?.cancel();
     };
-  }, [loadDashboard, loadInventory]);
+  }, [loadAssistantStatus, loadDashboard, loadInventory, loadStockMovements]);
 
   async function writeInventory(path: string, method: "POST" | "PUT", body: object, success: string) {
     setWriting(true);
@@ -286,7 +308,9 @@ export default function Home() {
         throw new Error(await apiError(response, `Could not save inventory changes (${response.status}).`));
       }
       setInventoryNotice(success);
-      await Promise.all([loadDashboard(), loadInventory()]);
+      const updates = [loadDashboard(), loadInventory()];
+      if (path.startsWith("/api/v1/inventory/")) updates.push(loadStockMovements());
+      await Promise.all(updates);
       return true;
     } catch (caught) {
       setInventoryWriteError(caught instanceof Error ? caught.message : "Could not save inventory changes.");
@@ -836,9 +860,11 @@ export default function Home() {
       <section className="inventory-section auxiliary-section" id="stock-movements" aria-labelledby="stock-movements-title">
         <div className="section-heading">
           <div><p className="eyebrow">AUDIT TRAIL</p><h2 id="stock-movements-title">Stock movements</h2><p className="intro">Receipts, adjustments, and transfers recorded for your business.</p></div>
-          <button className="refresh-button" type="button" onClick={() => void loadInventory()} disabled={inventoryLoading}>{inventoryLoading ? "Loading…" : "↻ Refresh"}</button>
+          <button className="refresh-button" type="button" onClick={() => void loadStockMovements()} disabled={movementLoading}>{movementLoading ? "Loading…" : "↻ Refresh"}</button>
         </div>
-        {inventoryLoading ? <p className="dashboard-state" role="status">Loading stock history…</p> : stockMovements.length === 0 ? (
+        {movementError ? (
+          <div className="dashboard-state state-error" role="alert"><span>{movementError}</span><button className="text-button" type="button" onClick={() => void loadStockMovements()}>Try again</button></div>
+        ) : movementLoading ? <p className="dashboard-state" role="status">Loading stock history…</p> : stockMovements.length === 0 ? (
           <p className="dashboard-state empty-state">Stock activity will appear after you record a receipt, adjustment, or transfer.</p>
         ) : (
           <div className="data-card movement-table-wrap">

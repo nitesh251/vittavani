@@ -15,7 +15,7 @@ from app.ai_service import AIProviderError, ai_is_configured, extract_product_qu
 from app.config import settings
 from app.database import get_db
 from app.formatting import format_quantity, format_quantity_label
-from app.inventory_metrics import is_low_stock
+from app.inventory_metrics import inventory_totals_subquery, is_low_stock
 from app.location_paths import location_paths
 from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
@@ -326,15 +326,7 @@ def dashboard(
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> DashboardResponse:
-    totals = (
-        select(
-            InventoryBalance.product_id.label("product_id"),
-            func.sum(InventoryBalance.quantity).label("quantity"),
-        )
-        .where(InventoryBalance.business_id == business_id)
-        .group_by(InventoryBalance.product_id)
-        .subquery()
-    )
+    totals = inventory_totals_subquery(business_id)
     products = session.execute(
         select(
             Product,

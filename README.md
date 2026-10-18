@@ -20,7 +20,7 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 8. Install and start the frontend: `npm install && npm run dev` from `frontend/`.
 9. Open `http://localhost:3000`. Health check: `http://localhost:8000/health`.
 
-Run backend tests using `pytest` from `backend/`. Check frontend types with `npm run lint` and make a production build with `npm run build` from `frontend/`.
+Run backend tests using `pytest` from `backend/`. From `frontend/`, run `npm run lint`, `npm run test:proxy` for the API proxy's authentication/method/origin checks, and `npm run build` for a production build.
 
 The frontend's npm override keeps the dependency tree on PostCSS 8.5.23 rather than Next.js's older exact transitive declaration; retain the override and lockfile together when updating frontend dependencies.
 
