@@ -281,7 +281,6 @@ def dashboard(
         if is_low_stock(quantity, product.minimum_stock)
     ]
     out_of_stock_count = sum(1 for _, quantity in products if quantity <= 0)
-    total_stock = sum((quantity for _, quantity in products), start=Decimal("0"))
     overall_by_unit: dict[str, Decimal] = {}
     for product, quantity in products:
         overall_by_unit[product.unit] = overall_by_unit.get(product.unit, Decimal("0")) + quantity
@@ -389,7 +388,11 @@ def dashboard(
     ]
     return DashboardResponse(
         product_count=len(products),
-        total_stock_units=str(total_stock) if len(on_hand_by_unit) <= 1 else None,
+        total_stock_units=(
+            str(next(iter(on_hand_by_unit.values()), Decimal("0")))
+            if len(on_hand_by_unit) <= 1
+            else None
+        ),
         stock_by_unit=stock_by_unit,
         low_stock_count=len(low_stock),
         out_of_stock_count=out_of_stock_count,
@@ -700,6 +703,7 @@ def _product_response(session: Session, business_id: UUID, product: Product) -> 
 
 
 def _require_active_product(session: Session, business_id: UUID, product_id: UUID) -> Product:
+    # Product locks serialize per-product writes before any inventory-balance locks are acquired.
     product = session.scalar(
         select(Product)
         .where(

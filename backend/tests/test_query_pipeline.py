@@ -378,6 +378,25 @@ def test_dashboard_keeps_different_units_separate(client, session):
     ]
 
 
+def test_dashboard_total_ignores_zero_stock_products_in_other_units(client, session):
+    session.add(
+        Product(
+            id=UUID("00000000-0000-0000-0000-000000000075"),
+            business_id=BUSINESS_ID,
+            name="Empty flour",
+            unit="bag",
+        )
+    )
+    session.commit()
+
+    data = client.get("/api/v1/dashboard", headers={"X-Dev-Token": "local-test-token"}).json()
+
+    assert data["stock_by_unit"] == [
+        {"unit": "packet", "quantity": "23.000", "display_quantity": "23 packets"}
+    ]
+    assert data["total_stock_units"] == "23.000"
+
+
 def test_dashboard_location_aggregates_exclude_inactive_products(client, session):
     product_id = UUID("00000000-0000-0000-0000-000000000074")
     session.add(

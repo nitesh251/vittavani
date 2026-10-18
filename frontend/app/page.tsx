@@ -664,7 +664,7 @@ export default function Home() {
                       <input type="number" step="0.001" required value={stockForm.quantity} onChange={(event) => setStockForm({ ...stockForm, quantity: event.target.value })} placeholder={stockMode === "adjustment" ? "-2 or 2" : "0"} />
                     </label>
                     <label>Note (optional)<input maxLength={500} value={stockForm.note} onChange={(event) => setStockForm({ ...stockForm, note: event.target.value })} /></label>
-                    <div className="form-actions"><button className="submit" type="submit" disabled={writing || !stockForm.product_id || !stockForm.location_id}>{writing ? "Saving…" : "Save stock change"}</button></div>
+                    <div className="form-actions"><button className="submit" type="submit" disabled={writing || !stockForm.product_id || (stockMode === "transfer" ? !stockForm.source_location_id || !stockForm.destination_location_id : !stockForm.location_id)}>{writing ? "Saving…" : "Save stock change"}</button></div>
                   </form>
                 )}
               </section>
