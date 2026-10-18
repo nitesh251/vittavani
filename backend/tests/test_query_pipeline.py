@@ -3,13 +3,13 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Business, InventoryBalance, Location, Product, ProductAlias
+from app.models import Business, InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
 
 BUSINESS_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -78,6 +78,22 @@ def session():
         db.commit()
         yield db
     Base.metadata.drop_all(engine)
+
+
+@pytest.fixture
+def client(session, monkeypatch):
+    monkeypatch.setattr("app.main.settings.app_env", "development")
+    monkeypatch.setattr("app.main.settings.dev_api_token", "local-test-token")
+    monkeypatch.setattr("app.main.settings.dev_business_id", str(BUSINESS_ID))
+
+    def override_db():
+        with Session(session.get_bind()) as request_session:
+            yield request_session
+
+    app.dependency_overrides[get_db] = override_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
 
 
 @pytest.mark.parametrize(
@@ -167,26 +183,124 @@ def test_low_stock_lookup_uses_configured_business_threshold(session):
     assert "Amul Butter" not in result.message
 
 
-def test_http_lookup_requires_configured_development_token(session, monkeypatch):
-    monkeypatch.setattr("app.main.settings.app_env", "development")
-    monkeypatch.setattr("app.main.settings.dev_api_token", "local-test-token")
-    monkeypatch.setattr("app.main.settings.dev_business_id", str(BUSINESS_ID))
-
-    def override_db():
-        yield session
-
-    app.dependency_overrides[get_db] = override_db
-    try:
-        client = TestClient(app)
-        assert client.post("/api/v1/ask", json={"query": "Where is Amul Butter?"}).status_code == 401
-        response = client.post(
-            "/api/v1/ask",
-            headers={"X-Dev-Token": "local-test-token"},
-            json={"query": "Where is Amul Butter?"},
-        )
-    finally:
-        app.dependency_overrides.clear()
+def test_http_lookup_requires_configured_development_token(client):
+    assert client.post("/api/v1/ask", json={"query": "Where is Amul Butter?"}).status_code == 401
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "Where is Amul Butter?"},
+    )
 
     assert response.status_code == 200
     assert response.json()["product_name"] == "Amul Butter"
     assert response.json()["original_query"] == "Where is Amul Butter?"
+
+
+def test_request_cannot_select_another_business(client):
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "Other Butter", "business_id": str(OTHER_BUSINESS_ID)},
+    )
+
+    assert response.status_code == 422
+
+
+def test_receipt_and_transfer_update_balances_and_append_movements(client, session):
+    destination = client.post(
+        "/api/v1/locations",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"name": "Dispatch shelf"},
+    )
+    assert destination.status_code == 201
+    product = client.post(
+        "/api/v1/products",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"name": "Rice", "unit": "bag", "aliases": ["चावल"]},
+    )
+    assert product.status_code == 201
+    receipt = client.post(
+        "/api/v1/inventory/receipts",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={
+            "product_id": product.json()["id"],
+            "location_id": "00000000-0000-0000-0000-000000000010",
+            "quantity": "10",
+        },
+    )
+    assert receipt.status_code == 201
+    transfer = client.post(
+        "/api/v1/inventory/transfers",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={
+            "product_id": product.json()["id"],
+            "source_location_id": "00000000-0000-0000-0000-000000000010",
+            "destination_location_id": destination.json()["id"],
+            "quantity": "3",
+        },
+    )
+
+    assert transfer.status_code == 200
+    assert transfer.json()["quantity"] == "7.000"
+    assert session.scalar(
+        select(InventoryBalance.quantity).where(
+            InventoryBalance.business_id == BUSINESS_ID,
+            InventoryBalance.product_id == UUID(product.json()["id"]),
+            InventoryBalance.location_id == UUID(destination.json()["id"]),
+        )
+    ) == Decimal("3.000")
+    assert session.scalar(
+        select(func.count(StockMovement.id)).where(
+            StockMovement.business_id == BUSINESS_ID,
+            StockMovement.product_id == UUID(product.json()["id"]),
+        )
+    ) == 3
+
+
+def test_insufficient_transfer_rolls_back_without_movement(client, session):
+    response = client.post(
+        "/api/v1/inventory/transfers",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={
+            "product_id": "00000000-0000-0000-0000-000000000020",
+            "source_location_id": "00000000-0000-0000-0000-000000000010",
+            "destination_location_id": "00000000-0000-0000-0000-000000000011",
+            "quantity": "100",
+        },
+    )
+
+    assert response.status_code == 409
+    assert session.scalar(
+        select(InventoryBalance.quantity).where(
+            InventoryBalance.business_id == BUSINESS_ID,
+            InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+            InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000010"),
+        )
+    ) == Decimal("3.000")
+    assert session.scalar(select(func.count(StockMovement.id))) == 0
+
+
+def test_receipt_rejects_negative_and_cross_business_products(client, session):
+    headers = {"X-Dev-Token": "local-test-token"}
+    negative = client.post(
+        "/api/v1/inventory/receipts",
+        headers=headers,
+        json={
+            "product_id": "00000000-0000-0000-0000-000000000020",
+            "location_id": "00000000-0000-0000-0000-000000000010",
+            "quantity": "-1",
+        },
+    )
+    other_tenant = client.post(
+        "/api/v1/inventory/receipts",
+        headers=headers,
+        json={
+            "product_id": "00000000-0000-0000-0000-000000000021",
+            "location_id": "00000000-0000-0000-0000-000000000010",
+            "quantity": "1",
+        },
+    )
+
+    assert negative.status_code == 422
+    assert other_tenant.status_code == 404
+    assert session.scalar(select(func.count(StockMovement.id))) == 0

@@ -10,6 +10,7 @@ Vittavani uses a small modular monolith: a Next.js/TypeScript web client calls a
 - `backend/app/models.py`: business-scoped catalogue and inventory persistence models.
 - `backend/app/query_understanding.py`: pure deterministic multilingual intent and entity matching.
 - `backend/app/query_service.py`: database-backed product lookup and answer construction.
+- `backend/app/main.py`: development-token-scoped product/location creation and transactional stock receipt/transfer routes.
 - `backend/alembic/`: versioned database schema changes.
 
 Every business-owned model carries a `business_id`; foreign keys and compound uniqueness constraints keep associations within a business. Database lookups must always include the authorized business scope. The initial development-token seam is not production authentication; protected development API routes are disabled outside development mode.
@@ -17,6 +18,8 @@ Every business-owned model carries a `business_id`; foreign keys and compound un
 ## Query path
 
 The query endpoint keeps the exact input, identifies read-only lookup intent, removes recognized command phrases before resolving a product, then matches active products in this order: canonical name, aliases, normalized exact name/alias, and fuzzy token similarity. Fuzzy ties return candidate names for clarification. Locations and quantities are read only from authorized database balances, never inferred from language-model output or fabricated.
+
+The initial write routes support product/location creation, confirmed stock receipt, and two-entry stock transfers. A transfer locks the source balance and adjusts both location balances plus both movement records in one transaction. Automatic transliteration, sales, customer credit, and production authentication are not available.
 
 ## Frontend
 

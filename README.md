@@ -10,7 +10,7 @@ Vittavani is a voice-first business-assistant foundation for Indian small busine
 
 ## Local development
 
-1. Copy `.env.example` to `.env`. Change `DEV_API_TOKEN` to a long random local-only value. Keep `.env` untracked. The configured business ID selects the single development tenant.
+1. Copy `.env.example` to `.env`. Change `DEV_API_TOKEN` to a long random local-only value. Keep `.env` untracked. The configured business ID selects the single development tenant. The Compose database uses passwordless trust authentication and is bound to loopback for local development only.
 2. Start the local database: `docker compose up -d db`.
 3. Install the backend: `cd backend && python -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'`.
 4. Apply migrations: `alembic upgrade head` from `backend/`.

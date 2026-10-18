@@ -1,13 +1,17 @@
 import secrets
+from decimal import Decimal
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
 from app.query_service import lookup_product
 
 app = FastAPI(title="Vittavani API", version="0.1.0")
@@ -16,11 +20,13 @@ app.add_middleware(
     allow_origins=[settings.frontend_origin],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Content-Type", "X-Dev-Token"],
 )
 
 
 class AskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: str = Field(min_length=1, max_length=500)
 
 
@@ -33,6 +39,49 @@ class AskResponse(BaseModel):
     locations: list[str]
     candidates: list[str]
     clarification_required: bool
+    message: str
+
+
+class LocationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    parent_location_id: UUID | None = None
+
+
+class ProductCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=180)
+    sku: str | None = Field(default=None, max_length=80)
+    unit: str = Field(min_length=1, max_length=32)
+    selling_price: Decimal = Field(default=Decimal("0"), ge=0, max_digits=12, decimal_places=2)
+    minimum_stock: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=3)
+    aliases: list[str] = Field(default_factory=list, max_length=25)
+
+
+class StockReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: UUID
+    location_id: UUID
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class StockTransfer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: UUID
+    source_location_id: UUID
+    destination_location_id: UUID
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class StockResult(BaseModel):
+    product_id: UUID
+    quantity: str
     message: str
 
 
@@ -69,4 +118,222 @@ def ask(
         candidates=list(result.candidates),
         clarification_required=result.clarification_required,
         message=result.message,
+    )
+
+
+@app.post("/api/v1/locations", status_code=status.HTTP_201_CREATED)
+def create_location(
+    body: LocationCreate,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, str | UUID | None]:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Location name cannot be blank")
+    try:
+        with session.begin():
+            if body.parent_location_id is not None:
+                parent = session.scalar(
+                    select(Location).where(
+                        Location.business_id == business_id,
+                        Location.id == body.parent_location_id,
+                    )
+                )
+                if parent is None:
+                    raise HTTPException(status_code=404, detail="Parent location not found")
+            location = Location(
+                business_id=business_id,
+                name=name,
+                parent_location_id=body.parent_location_id,
+            )
+            session.add(location)
+            session.flush()
+            result = {
+                "id": location.id,
+                "name": location.name,
+                "parent_location_id": location.parent_location_id,
+            }
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="A location with this name already exists here") from exc
+    return result
+
+
+@app.post("/api/v1/products", status_code=status.HTTP_201_CREATED)
+def create_product(
+    body: ProductCreate,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, str | UUID]:
+    name = body.name.strip()
+    unit = body.unit.strip()
+    aliases = [alias.strip() for alias in body.aliases]
+    if not name or not unit or any(not alias for alias in aliases):
+        raise HTTPException(status_code=422, detail="Product name, unit, and aliases cannot be blank")
+    if len({alias.casefold() for alias in aliases}) != len(aliases):
+        raise HTTPException(status_code=422, detail="Product aliases must be unique")
+    if body.sku is not None and not body.sku.strip():
+        raise HTTPException(status_code=422, detail="SKU cannot be blank")
+
+    try:
+        with session.begin():
+            product = Product(
+                business_id=business_id,
+                name=name,
+                sku=body.sku.strip() if body.sku else None,
+                unit=unit,
+                selling_price=body.selling_price,
+                minimum_stock=body.minimum_stock,
+            )
+            session.add(product)
+            session.flush()
+            session.add_all(
+                ProductAlias(business_id=business_id, product_id=product.id, alias=alias)
+                for alias in aliases
+            )
+            result = {"id": product.id, "name": product.name, "unit": product.unit}
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="A product with this SKU or alias already exists") from exc
+    return result
+
+
+def _require_active_product(session: Session, business_id: UUID, product_id: UUID) -> Product:
+    product = session.scalar(
+        select(Product).where(
+            Product.business_id == business_id,
+            Product.id == product_id,
+            Product.active.is_(True),
+        )
+    )
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return product
+
+
+def _require_location(session: Session, business_id: UUID, location_id: UUID) -> None:
+    if session.scalar(
+        select(Location.id).where(Location.business_id == business_id, Location.id == location_id)
+    ) is None:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+
+@app.post("/api/v1/inventory/receipts", response_model=StockResult, status_code=status.HTTP_201_CREATED)
+def receive_stock(
+    body: StockReceipt,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> StockResult:
+    try:
+        with session.begin():
+            product = _require_active_product(session, business_id, body.product_id)
+            _require_location(session, business_id, body.location_id)
+            balance = session.scalar(
+                select(InventoryBalance)
+                .where(
+                    InventoryBalance.business_id == business_id,
+                    InventoryBalance.product_id == body.product_id,
+                    InventoryBalance.location_id == body.location_id,
+                )
+                .with_for_update()
+            )
+            if balance is None:
+                balance = InventoryBalance(
+                    business_id=business_id,
+                    product_id=body.product_id,
+                    location_id=body.location_id,
+                    quantity=body.quantity,
+                )
+                session.add(balance)
+            else:
+                balance.quantity += body.quantity
+            session.add(
+                StockMovement(
+                    business_id=business_id,
+                    product_id=body.product_id,
+                    destination_location_id=body.location_id,
+                    movement_type="purchase_receipt",
+                    quantity_change=body.quantity,
+                    initiated_by="development-token",
+                    note=body.note,
+                )
+            )
+            session.flush()
+            total = balance.quantity
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Inventory changed concurrently; retry the receipt") from exc
+    return StockResult(
+        product_id=product.id,
+        quantity=str(total),
+        message=f"Received {body.quantity} {product.unit} of {product.name}.",
+    )
+
+
+@app.post("/api/v1/inventory/transfers", response_model=StockResult)
+def transfer_stock(
+    body: StockTransfer,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> StockResult:
+    if body.source_location_id == body.destination_location_id:
+        raise HTTPException(status_code=422, detail="Source and destination must be different locations")
+
+    try:
+        with session.begin():
+            product = _require_active_product(session, business_id, body.product_id)
+            _require_location(session, business_id, body.source_location_id)
+            _require_location(session, business_id, body.destination_location_id)
+            source = session.scalar(
+                select(InventoryBalance)
+                .where(
+                    InventoryBalance.business_id == business_id,
+                    InventoryBalance.product_id == body.product_id,
+                    InventoryBalance.location_id == body.source_location_id,
+                )
+                .with_for_update()
+            )
+            if source is None or source.quantity < body.quantity:
+                raise HTTPException(status_code=409, detail="Insufficient stock at the source location")
+            destination = session.scalar(
+                select(InventoryBalance)
+                .where(
+                    InventoryBalance.business_id == business_id,
+                    InventoryBalance.product_id == body.product_id,
+                    InventoryBalance.location_id == body.destination_location_id,
+                )
+                .with_for_update()
+            )
+            source.quantity -= body.quantity
+            if destination is None:
+                destination = InventoryBalance(
+                    business_id=business_id,
+                    product_id=body.product_id,
+                    location_id=body.destination_location_id,
+                    quantity=body.quantity,
+                )
+                session.add(destination)
+            else:
+                destination.quantity += body.quantity
+            for movement_type, quantity_change in (
+                ("transfer_out", -body.quantity),
+                ("transfer_in", body.quantity),
+            ):
+                session.add(
+                    StockMovement(
+                        business_id=business_id,
+                        product_id=body.product_id,
+                        source_location_id=body.source_location_id,
+                        destination_location_id=body.destination_location_id,
+                        movement_type=movement_type,
+                        quantity_change=quantity_change,
+                        initiated_by="development-token",
+                        note=body.note,
+                    )
+                )
+            session.flush()
+            remaining = source.quantity
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Inventory changed concurrently; retry the transfer") from exc
+    return StockResult(
+        product_id=product.id,
+        quantity=str(remaining),
+        message=f"Moved {body.quantity} {product.unit} of {product.name}.",
     )
