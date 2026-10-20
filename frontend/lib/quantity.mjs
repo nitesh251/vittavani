@@ -26,7 +26,7 @@ export function compareDecimalStrings(left, right) {
   if (!leftDecimal || !rightDecimal) {
     if (leftDecimal) return -1;
     if (rightDecimal) return 1;
-    return Math.sign(left.localeCompare(right));
+    return left < right ? -1 : left > right ? 1 : 0;
   }
 
   const scale = Math.max(leftDecimal.scale, rightDecimal.scale);
