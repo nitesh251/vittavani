@@ -84,7 +84,12 @@ type SpeechWindow = Window & {
   webkitSpeechRecognition?: SpeechRecognitionConstructor;
 };
 
-const examples = ["Amul butter kahan rakha hai?", "अमूल बटर कितना बचा है?", "Show low stock items."];
+const examples = [
+  "How much stock is left for Amul Butter?",
+  "Amul butter kahan rakha hai?",
+  "अमूल बटर कितना बचा है?",
+  "Show my low-stock products.",
+];
 const stockStatusLabels = {
   in_stock: "In stock",
   low_stock: "Low stock",
@@ -142,16 +147,21 @@ function Metric({
   label,
   value,
   detail,
-  warning = false,
+  icon,
+  tone,
 }: {
   label: string;
   value: string;
   detail: string;
-  warning?: boolean;
+  icon: string;
+  tone: "green" | "blue" | "purple" | "orange";
 }) {
   return (
-    <article className={`metric${warning ? " metric-warning" : ""}`}>
-      <p className="metric-label">{label}</p>
+    <article className={`metric metric-${tone}`}>
+      <div className="metric-topline">
+        <span className="metric-icon" aria-hidden="true">{icon}</span>
+        <span className="metric-label">{label}</span>
+      </div>
       <p className="metric-value">{value}</p>
       <p className="metric-detail">{detail}</p>
     </article>
@@ -174,6 +184,7 @@ export default function Home() {
   const [aiProvider, setAiProvider] = useState("");
   const [aiModel, setAiModel] = useState("");
   const [assistantMode, setAssistantMode] = useState<AssistantMode>("normal");
+  const [activeSection, setActiveSection] = useState("dashboard");
   const [productSearch, setProductSearch] = useState("");
   const [productStatusFilter, setProductStatusFilter] = useState("all");
   const [productSort, setProductSort] = useState("name");
@@ -523,30 +534,107 @@ export default function Home() {
     : aiConfigured
       ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Stock facts are still fetched from your inventory.`
       : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search.";
+  const activeProductCount = products.filter((product) => product.active).length;
+  const stockAlertRows = [
+    ...(dashboard?.low_stock_products.map((product) => {
+      const inventoryProduct = products.find((item) => item.id === product.id);
+      const locations = inventoryProduct?.balances
+        .filter((balance) => compareDecimalStrings(balance.quantity, "0") > 0)
+        .map((balance) => `${locationNames.get(balance.location_id) ?? balance.location_name}: ${balance.display_quantity}`)
+        .join(" · ");
+      return {
+        id: product.id,
+        name: product.name,
+        available: product.display_quantity,
+        minimum: product.display_minimum_stock,
+        location: locations || "Location not recorded",
+        status: "low_stock" as const,
+      };
+    }) ?? []),
+    ...products
+      .filter((product) => product.stock_status === "out_of_stock")
+      .map((product) => ({
+        id: product.id,
+        name: product.name,
+        available: product.display_quantity,
+        minimum: product.display_minimum_stock,
+        location: "No available stock",
+        status: "out_of_stock" as const,
+      })),
+  ];
 
   return (
     <main className="page">
       <header className="topbar">
         <a className="brand" href="#dashboard" aria-label="Vittavani dashboard">
-          <span className="brand-mark" aria-hidden="true">வ</span>
+          <span className="brand-mark" aria-hidden="true"><span>வி</span></span>
           <span>Vittavani</span>
         </a>
-        <nav className="main-nav" aria-label="Main navigation">
-          <a href="#dashboard">Dashboard</a>
-          <a href="#inventory">Inventory</a>
-          <a href="#locations">Locations</a>
-          <a href="#stock-movements">Stock Movements</a>
-          <a href="#ask">Ask Vittavani</a>
-        </nav>
-        <span className="company">A product of Vinayaka Services</span>
+        <label className="global-search">
+          <span aria-hidden="true">⌕</span>
+          <input
+            type="search"
+            value={productSearch}
+            onChange={(event) => setProductSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                document.getElementById("inventory")?.scrollIntoView({ behavior: "smooth" });
+              }
+            }}
+            placeholder="Search products, aliases, SKU"
+            aria-label="Search inventory products"
+          />
+          <kbd>/</kbd>
+        </label>
+        <div className="topbar-actions">
+          <label className="top-language" htmlFor="top-language">
+            <span className="language-globe" aria-hidden="true">◎</span>
+            <select id="top-language" value={speechLanguage} onChange={(event) => setSpeechLanguage(event.target.value)} aria-label="Voice language">
+              <option value="hi-IN">हिंदी</option>
+              <option value="en-IN">English</option>
+            </select>
+          </label>
+          <a className="notification-button" href="#stock-alerts" aria-label={`Stock alerts: ${dashboard ? dashboard.low_stock_count + dashboard.out_of_stock_count : 0}`}>
+            <span aria-hidden="true">♧</span>
+            {dashboard && dashboard.low_stock_count + dashboard.out_of_stock_count > 0 && <span className="notification-count">{dashboard.low_stock_count + dashboard.out_of_stock_count}</span>}
+          </a>
+          <div className="business-context"><span className="business-avatar">V</span><span><strong>Business workspace</strong><small>A product of Vinayaka Services</small></span></div>
+        </div>
       </header>
 
+      <div className="app-layout">
+        <aside className="sidebar" aria-label="Workspace navigation">
+          <p className="sidebar-caption">WORKSPACE</p>
+          <nav className="sidebar-nav">
+            <a className={activeSection === "dashboard" ? "nav-active" : ""} href="#dashboard" onClick={() => setActiveSection("dashboard")}><span className="nav-icon">▦</span>Dashboard</a>
+            <span className="nav-unavailable" title="Sales requires a backend module before it can be enabled"><span className="nav-icon">↗</span>Sales<small>Later</small></span>
+            <a className={activeSection === "inventory" ? "nav-active" : ""} href="#inventory" onClick={() => setActiveSection("inventory")}><span className="nav-icon">▤</span>Inventory</a>
+            <span className="nav-unavailable" title="Customer udhar requires a backend ledger before it can be enabled"><span className="nav-icon">♙</span>Customers &amp; Udhar<small>Later</small></span>
+            <span className="nav-unavailable" title="Payment workflows are not implemented"><span className="nav-icon">↔</span>Payments &amp; Collections<small>Later</small></span>
+            <span className="nav-unavailable" title="Purchasing workflows are not implemented"><span className="nav-icon">▣</span>Purchases<small>Later</small></span>
+            <span className="nav-unavailable" title="Expense workflows are not implemented"><span className="nav-icon">◷</span>Expenses<small>Later</small></span>
+            <a className={activeSection === "locations" ? "nav-active" : ""} href="#locations" onClick={() => setActiveSection("locations")}><span className="nav-icon">⌂</span>Locations</a>
+            <span className="nav-unavailable" title="Financial reporting is not implemented"><span className="nav-icon">▥</span>Reports<small>Later</small></span>
+            <a className={activeSection === "ask" ? "nav-active" : ""} href="#ask" onClick={() => setActiveSection("ask")}><span className="nav-icon">✦</span>Ask Vittavani</a>
+            <span className="nav-unavailable" title="Account settings are not implemented"><span className="nav-icon">⚙</span>Settings<small>Later</small></span>
+            <a className={activeSection === "stock-movements" ? "nav-active" : ""} href="#stock-movements" onClick={() => setActiveSection("stock-movements")}><span className="nav-icon">↕</span>Stock movements</a>
+          </nav>
+          <div className="sidebar-assistant">
+            <div className="sidebar-assistant-icon">✦</div>
+            <strong>Business, by voice</strong>
+            <p>Ask about real stock in English, Hindi, or Hinglish.</p>
+            <a href="#ask" onClick={() => setActiveSection("ask")}>Ask Vittavani <span aria-hidden="true">→</span></a>
+          </div>
+          <div className="sidebar-footer"><span className="sidebar-footer-mark">வி</span><span><strong>Vittavani</strong><small>by Vinayaka Services</small></span></div>
+        </aside>
+        <div className="workspace">
       <section className="dashboard-section" id="dashboard" aria-labelledby="dashboard-title">
         <div className="section-heading">
           <div>
             <p className="eyebrow">YOUR BUSINESS AT A GLANCE</p>
-            <h1 id="dashboard-title">Dashboard</h1>
-            <p className="intro">A live view of the inventory recorded for your business.</p>
+            <h1 id="dashboard-title">Good day<span className="heading-dot">.</span></h1>
+            <p className="intro">Here’s what’s happening in your inventory today.</p>
           </div>
           <button className="refresh-button" type="button" onClick={() => void loadDashboard()} disabled={dashboardLoading}>
             {dashboardLoading ? "Refreshing…" : "↻ Refresh"}
@@ -579,7 +667,7 @@ export default function Home() {
         {!dashboardLoading && !dashboardError && dashboard && (dashboard.product_count > 0 || (!inventoryLoading && !inventoryError && products.length > 0)) && (
           <>
             <div className="metrics-grid" aria-label="Inventory summary">
-              <Metric label="Products / SKUs" value={String(dashboard.product_count)} detail="Active products in your catalogue" />
+              <Metric label="Active products" value={String(activeProductCount)} detail="Products in your catalogue" icon="▤" tone="green" />
               <Metric
                 label="Stock on hand"
                 value={
@@ -596,43 +684,54 @@ export default function Home() {
                       ? "On hand across recorded locations"
                       : "No stock currently recorded"
                 }
+                icon="◫"
+                tone="blue"
               />
               <Metric
                 label="Low stock"
                 value={String(dashboard.low_stock_count)}
                 detail="In-stock products at/below configured minimum"
-                warning={dashboard.low_stock_count > 0}
+                icon="⌁"
+                tone="purple"
               />
               <Metric
                 label="Out of stock"
                 value={String(dashboard.out_of_stock_count)}
                 detail="Active products with no stock"
-                warning={dashboard.out_of_stock_count > 0}
+                icon="!"
+                tone="orange"
               />
             </div>
-            <section className="quick-actions" aria-label="Quick actions">
-              <strong>Quick actions</strong>
-              <a className="quick-action" href="#stock-entry">＋ Receive stock</a>
-              <a className="quick-action" href="#stock-entry" onClick={() => setStockMode("transfer")}>⇄ Transfer stock</a>
-              <a className="quick-action" href="#ask">✦ Ask Vittavani</a>
+            <section className="quick-actions-panel" aria-labelledby="quick-actions-title">
+              <div className="panel-title-row">
+                <div><p className="eyebrow">TAKE ACTION</p><h2 id="quick-actions-title">Quick actions</h2></div>
+                <span className="panel-sparkle" aria-hidden="true">✦</span>
+              </div>
+              <div className="quick-actions">
+                <a className="quick-action action-green" href="#stock-entry" onClick={() => { setStockMode("receipt"); setActiveSection("inventory"); }}><span>＋</span><strong>Receive stock</strong><small>Record incoming items</small></a>
+                <a className="quick-action action-blue" href="#stock-entry" onClick={() => { setStockMode("transfer"); setActiveSection("inventory"); }}><span>⇄</span><strong>Transfer stock</strong><small>Move between locations</small></a>
+                <a className="quick-action action-purple" href="#product-form-title" onClick={() => setActiveSection("inventory")}><span>▤</span><strong>Add product</strong><small>Grow your catalogue</small></a>
+                <a className="quick-action action-orange" href="#ask" onClick={() => setActiveSection("ask")}><span>✦</span><strong>Ask Vittavani</strong><small>Speak or type a question</small></a>
+              </div>
+              <p className="feature-boundary">Sales, customer udhar, payments, purchases, and expenses aren’t enabled yet—no sample figures are shown.</p>
             </section>
             <div className="dashboard-columns">
-              <section className="data-card" aria-labelledby="low-stock-title">
+              <section className="data-card" id="stock-alerts" aria-labelledby="low-stock-title">
                 <div className="card-heading">
                   <div>
                     <h2 id="low-stock-title">Stock alerts</h2>
-                    <p>In-stock products at or below their set minimum</p>
+                    <p>Low and out-of-stock products to review</p>
                   </div>
-                  <span className="count-pill">{dashboard.low_stock_count}</span>
+                  <span className="count-pill">{dashboard.low_stock_count + dashboard.out_of_stock_count}</span>
                 </div>
-                {dashboard.low_stock_products.length === 0 ? (
+                {stockAlertRows.length === 0 ? (
                   <p className="card-empty">No low-stock alerts. Products without a configured minimum are not counted.</p>
                 ) : (
                   <ul className="data-list">
-                    {dashboard.low_stock_products.map((product) => (
+                    {stockAlertRows.map((product) => (
                       <li key={product.id}>
-                        <span><strong>{product.name}</strong><small>Minimum {product.display_minimum_stock}</small></span>
-                        <span className="stock-quantity">{product.display_quantity}</span>
+                        <span><strong>{product.name}</strong><small>Available {product.available} · minimum {product.minimum} · {product.location}</small></span>
+                        <span className={`stock-status stock-status-${product.status}`}>{stockStatusLabels[product.status]}</span>
                       </li>
                     ))}
                   </ul>
@@ -662,9 +761,10 @@ export default function Home() {
             <section className="data-card activity-card" aria-labelledby="activity-title">
               <div className="card-heading">
                 <div>
-                  <h2 id="activity-title">Recent stock activity</h2>
-                  <p>Latest recorded stock receipts and transfers</p>
+                  <h2 id="activity-title">Recent stock movements</h2>
+                  <p>Latest committed inventory changes</p>
                 </div>
+                <a className="view-all-link" href="#stock-movements" onClick={() => setActiveSection("stock-movements")}>View all <span aria-hidden="true">→</span></a>
               </div>
               {dashboard.recent_stock_activity.length === 0 ? (
                 <p className="card-empty">Stock activity will appear here when receipts or transfers are recorded.</p>
@@ -678,8 +778,9 @@ export default function Home() {
                           {movement.source_location ? `${movement.source_location} → ` : ""}
                           {movement.destination_location ?? movement.source_location ?? "Location not recorded"}
                         </small>
+                        <small>{new Date(movement.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</small>
                       </span>
-                      <span className="stock-quantity">{movement.display_quantity}</span>
+                      <span className={`movement-quantity movement-${movement.movement_type.startsWith("transfer") ? "transfer" : movement.movement_type === "purchase_receipt" ? "received" : "adjustment"}`}>{movement.movement_type.startsWith("transfer") ? "⇄ " : movement.movement_type === "purchase_receipt" ? "＋ " : "↕ "}{movement.display_quantity}</span>
                     </li>
                   ))}
                 </ul>
@@ -885,9 +986,12 @@ export default function Home() {
       </section>
 
       <section className="ask-section" id="ask" aria-labelledby="welcome-title">
-        <p className="eyebrow">YOUR BUSINESS, IN YOUR WORDS</p>
-        <h2 id="welcome-title">Ask Vittavani</h2>
-        <p className="intro">Ask about your products in English, Hindi, or Hinglish.</p>
+        <div className="assistant-heading">
+          <span className="assistant-emblem" aria-hidden="true">✦</span>
+          <p className="eyebrow">YOUR BUSINESS, IN YOUR WORDS</p>
+          <h2 id="welcome-title">Ask Vittavani</h2>
+          <p className="intro">Your business, in your words.</p>
+        </div>
         <div className="assistant-modes" role="group" aria-label="Assistant mode">
           <button type="button" className={assistantMode === "normal" ? "mode-active" : ""} aria-pressed={assistantMode === "normal"} onClick={() => setAssistantMode("normal")}>Normal Search</button>
           <button type="button" className={assistantMode === "ai" ? "mode-active" : ""} aria-pressed={assistantMode === "ai"} onClick={() => setAssistantMode("ai")}>AI Assistant</button>
@@ -971,6 +1075,8 @@ export default function Home() {
           </section>
         )}
       </section>
+        </div>
+      </div>
       <footer className="footer">A product of Vinayaka Services</footer>
     </main>
   );
