@@ -24,6 +24,8 @@ export function compareDecimalStrings(left, right) {
   const leftDecimal = parseDecimal(left);
   const rightDecimal = parseDecimal(right);
   if (!leftDecimal || !rightDecimal) {
+    if (leftDecimal) return -1;
+    if (rightDecimal) return 1;
     return Math.sign(left.localeCompare(right));
   }
 

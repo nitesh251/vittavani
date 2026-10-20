@@ -25,5 +25,7 @@ test("orders positive, negative, and fractional quantities", () => {
 
 test("falls back safely for non-decimal representations", () => {
   assert.doesNotThrow(() => compareDecimalStrings("invalid", "1"));
-  assert.ok([-1, 0, 1].includes(compareDecimalStrings("invalid", "1")));
+  assert.equal(compareDecimalStrings("1", "invalid"), -1);
+  assert.equal(compareDecimalStrings("invalid", "1"), 1);
+  assert.equal(compareDecimalStrings("invalid", "also-invalid"), 1);
 });

@@ -968,19 +968,24 @@ export default function Home() {
           <p className="dashboard-state empty-state">Stock activity will appear after you record a receipt, adjustment, or transfer.</p>
         ) : (
           <div className="data-card movement-table-wrap">
-            <div className="movement-table" role="table" aria-label="Stock movement history">
-              <div role="rowgroup">
-                <div className="movement-row movement-header" role="row"><span role="columnheader">Product / movement</span><span role="columnheader">Quantity</span><span role="columnheader">Route / note</span><span role="columnheader">Recorded</span></div>
-              </div>
-              <div role="rowgroup">
-                {stockMovements.map((movement) => <div className="movement-row" role="row" key={movement.id}>
-                  <span role="cell"><strong>{movement.product_name}</strong><small>{movementLabel(movement.movement_type)}</small></span>
-                  <span className="stock-quantity" role="cell">{movement.display_quantity}</span>
-                  <span role="cell"><small>{movement.source_location ? `${movement.source_location} → ` : ""}{movement.destination_location ?? movement.source_location ?? "Location not recorded"}{movement.note ? ` · ${movement.note}` : ""}</small></span>
-                  <time role="cell" dateTime={movement.created_at}>{new Date(movement.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
-                </div>)}
-              </div>
-            </div>
+            <table className="movement-table" aria-label="Stock movement history">
+              <thead>
+                <tr className="movement-row movement-header">
+                  <th scope="col">Product / movement</th>
+                  <th scope="col">Quantity</th>
+                  <th scope="col">Route / note</th>
+                  <th scope="col">Recorded</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stockMovements.map((movement) => <tr className="movement-row" key={movement.id}>
+                  <td><strong>{movement.product_name}</strong><small>{movementLabel(movement.movement_type)}</small></td>
+                  <td className="stock-quantity">{movement.display_quantity}</td>
+                  <td><small>{movement.source_location ? `${movement.source_location} → ` : ""}{movement.destination_location ?? movement.source_location ?? "Location not recorded"}{movement.note ? ` · ${movement.note}` : ""}</small></td>
+                  <td><time dateTime={movement.created_at}>{new Date(movement.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time></td>
+                </tr>)}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

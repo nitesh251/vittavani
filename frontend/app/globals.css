@@ -98,15 +98,17 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
 .location-card h3 { margin: 0; font-size: 15px; }
 .location-card p { margin: 6px 0 13px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .location-card small { color: var(--green-dark); font-size: 11px; line-height: 1.5; }
-.movement-table-wrap { padding: 0; overflow: hidden; }
-.movement-table { display: grid; }
-.movement-row { display: grid; grid-template-columns: 1.1fr .7fr 1.6fr 1fr; align-items: center; gap: 16px; padding: 13px 18px; border-top: 1px solid #edf1ee; font-size: 12px; }
-.movement-row:first-child { border-top: 0; }
-.movement-row > span { min-width: 0; }
+.movement-table-wrap { padding: 0; overflow-x: auto; }
+.movement-table { width: 100%; min-width: 700px; border-collapse: collapse; table-layout: fixed; }
+.movement-row { border-top: 1px solid #edf1ee; font-size: 12px; }
+.movement-row > th, .movement-row > td { padding: 13px 18px; text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
+.movement-row > :nth-child(1) { width: 25%; }
+.movement-row > :nth-child(2) { width: 15%; }
+.movement-row > :nth-child(3) { width: 35%; }
+.movement-row > :nth-child(4) { width: 25%; }
 .movement-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
 .movement-row time { color: var(--muted); font-size: 11px; }
-.movement-header { background: #f7faf8; color: #52675c; font-weight: 700; }
-.movement-header:first-child { border-radius: 14px 14px 0 0; }
+.movement-header { border-top: 0; background: #f7faf8; color: #52675c; font-weight: 700; }
 .loading-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .inventory-loading { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .inventory-loading .skeleton { height: 310px; }
@@ -155,9 +157,6 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
   .location-form { grid-template-columns: 1fr 1fr; }
   .location-form .form-actions { grid-column: 1 / -1; }
   .location-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .movement-row { grid-template-columns: 1fr .7fr; gap: 9px 16px; }
-  .movement-header { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; }
-  .movement-row > span:nth-child(3), .movement-row time { grid-column: auto; }
 }
 @media (max-width: 560px) {
   .topbar { height: auto; min-height: 66px; flex-wrap: wrap; padding: 9px 16px 7px; gap: 4px 8px; }
@@ -175,10 +174,8 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
   .inventory-toolbar .search-field { grid-column: 1 / -1; }
   .location-grid { grid-template-columns: 1fr; }
   .location-card { padding: 16px; }
-  .movement-row { padding: 12px; font-size: 11px; }
+  .movement-row { font-size: 11px; }
   .movement-row time { font-size: 11px; }
-  .movement-row > span:nth-child(3) { grid-column: 1 / -1; }
-  .movement-row time { grid-column: 1 / -1; }
   .assistant-modes button { padding: 8px 11px; font-size: 12px; }
   .inventory-section { padding-top: 27px; }
   .inventory-section > .section-heading { align-items: center; }
@@ -287,8 +284,6 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
 .inventory-products { padding: 18px; }
 .location-grid { gap: 12px; }
 .location-card { min-height: 160px; }
-.movement-table-wrap { overflow-x: auto; }
-.movement-row { min-width: 700px; }
 .assistant-heading { text-align: center; }
 .assistant-emblem { display: grid; place-items: center; width: 47px; height: 47px; margin: 0 auto 13px; border-radius: 16px; background: linear-gradient(145deg, #e4f5ea, #d4f0df); color: #138052; font-size: 23px; box-shadow: 0 5px 13px #16845b18; }
 .assistant-heading .eyebrow { margin-bottom: 5px; font-size: 11px; }
@@ -361,7 +356,6 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
   .inventory-toolbar .search-field { grid-column: 1 / -1; }
   .data-card { padding: 14px; }
   .section-heading .intro, .inventory-section .intro { max-width: 220px; }
-  .movement-row { min-width: 620px; }
   .ask-section { padding: 26px 0 22px; }
   .assistant-heading h2 { font-size: 24px; }
   .ask-card { padding: 15px; }
