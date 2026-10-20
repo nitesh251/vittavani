@@ -47,7 +47,7 @@ Verify the API is running at `http://localhost:8000/health`, then open `http://l
 
 ### Optional AI Assistant
 
-Normal Search works without an LLM. To enable the Groq-backed AI Assistant, set `AI_PROVIDER=groq`, `AI_MODEL` to a model supported by your Groq account, and `GROQ_API_KEY` in the repository-root `.env`, then restart FastAPI and Next.js. `AI_TIMEOUT_SECONDS` optionally controls the provider timeout (bounded by the backend). The key is used only by the backend; the model interprets a query, while inventory quantities and locations continue to come from database lookup results. If these settings are absent or invalid, the UI explains that AI mode is unavailable and Normal Search remains usable.
+Normal Search works without an LLM. To enable the Groq-backed AI Assistant, set `AI_PROVIDER=groq`, `AI_MODEL` to a model supported by your Groq account, and `GROQ_API_KEY` in the repository-root `.env`, then restart FastAPI and Next.js. `AI_TIMEOUT_SECONDS` optionally controls the provider timeout; requests are bounded to 1–30 seconds, so a configured value of `100` is capped at 30 seconds. The key is used only by the backend; the model interprets a query, while inventory quantities and locations continue to come from database lookup results. If these settings are absent or invalid, the UI explains that AI mode is unavailable and Normal Search remains usable.
 
 ## Inventory workflows
 
