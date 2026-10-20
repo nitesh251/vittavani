@@ -5,14 +5,15 @@ import re
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from app.config import settings
+from app.config import MAX_AI_TIMEOUT_SECONDS, settings
 from app.query_understanding import Intent
 
 _MAX_PROVIDER_RESPONSE_BYTES = 32_768
 _MAX_PROVIDER_ERROR_BYTES = 4_096
 _MAX_LOG_DETAIL_LENGTH = 512
-_MAX_PROVIDER_TIMEOUT_SECONDS = 30
 _MIN_OPAQUE_TOKEN_LENGTH = 32
+_SAFE_OPAQUE_DIAGNOSTIC_PREFIXES = ("model_not_found_for_",)
+_warned_timeout_values: set[int] = set()
 logger = logging.getLogger(__name__)
 
 _BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
@@ -46,8 +47,15 @@ def _sanitize_provider_detail(detail: str) -> str:
     sanitized = _BEARER_PATTERN.sub("[REDACTED]", sanitized)
     sanitized = _API_KEY_PATTERN.sub("[REDACTED]", sanitized)
     sanitized = _NAMED_SECRET_PATTERN.sub(r"\1=[REDACTED]", sanitized)
-    sanitized = _OPAQUE_TOKEN_PATTERN.sub("[REDACTED]", sanitized)
+    sanitized = _OPAQUE_TOKEN_PATTERN.sub(_redact_opaque_token, sanitized)
     return " ".join(sanitized.split())[:_MAX_LOG_DETAIL_LENGTH]
+
+
+def _redact_opaque_token(match: re.Match[str]) -> str:
+    token = match.group(0)
+    if token.casefold().startswith(_SAFE_OPAQUE_DIAGNOSTIC_PREFIXES):
+        return token
+    return "[REDACTED]"
 
 
 def _provider_error_message(response_body: bytes) -> str:
@@ -121,12 +129,13 @@ def extract_product_query(question: str) -> dict[str, str | None]:
         method="POST",
     )
     configured_timeout = settings.ai_timeout_seconds
-    timeout_seconds = max(1, min(configured_timeout, _MAX_PROVIDER_TIMEOUT_SECONDS))
-    if configured_timeout != timeout_seconds:
+    timeout_seconds = max(1, min(configured_timeout, MAX_AI_TIMEOUT_SECONDS))
+    if configured_timeout != timeout_seconds and configured_timeout not in _warned_timeout_values:
+        _warned_timeout_values.add(configured_timeout)
         logger.warning(
             "AI_TIMEOUT_SECONDS=%s is outside the supported 1–%s second range; using %s seconds",
             configured_timeout,
-            _MAX_PROVIDER_TIMEOUT_SECONDS,
+            MAX_AI_TIMEOUT_SECONDS,
             timeout_seconds,
         )
     try:

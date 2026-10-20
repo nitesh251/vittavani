@@ -108,7 +108,10 @@ def test_provider_response_protocol_errors_are_classified_as_network(
 
 def test_provider_error_redacts_opaque_tokens(configured_ai, monkeypatch, caplog):
     opaque_token = "opaque_token_value_0123456789abcdef"
-    provider_body = json.dumps({"error": {"message": f"Invalid credential {opaque_token}"}})
+    model_error_code = "model_not_found_for_llama-3.1-70b-versatile-preview"
+    provider_body = json.dumps(
+        {"error": {"message": f"Invalid credential {opaque_token}; {model_error_code}"}}
+    )
     monkeypatch.setattr(
         "app.ai_service.urlopen",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(http_error(401, provider_body)),
@@ -119,6 +122,28 @@ def test_provider_error_redacts_opaque_tokens(configured_ai, monkeypatch, caplog
 
     assert opaque_token not in caplog.text
     assert "[REDACTED]" in caplog.text
+    assert model_error_code in caplog.text
+
+
+def test_timeout_while_reading_response_is_classified_as_timeout(
+    configured_ai, monkeypatch, caplog
+):
+    class SlowResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            raise TimeoutError("read timed out")
+
+    monkeypatch.setattr("app.ai_service.urlopen", lambda *_args, **_kwargs: SlowResponse())
+
+    with pytest.raises(AIProviderError, match="timed out"):
+        extract_product_query("How much stock is left?")
+
+    assert "category=timeout" in caplog.text
 
 
 def test_provider_network_and_timeout_errors_have_distinct_diagnostics(
@@ -209,16 +234,18 @@ def test_provider_sends_structured_output_and_caps_configured_timeout(
         return BytesIO(provider_response)
 
     monkeypatch.setattr("app.ai_service.settings.ai_timeout_seconds", 100)
+    monkeypatch.setattr("app.ai_service._warned_timeout_values", set())
     monkeypatch.setattr("app.ai_service.urlopen", mock_urlopen)
 
-    assert extract_product_query("How much stock is left for Amul Butter?") == {
-        "intent": "stock",
-        "product_query": "Amul Butter",
-    }
+    for _ in range(2):
+        assert extract_product_query("How much stock is left for Amul Butter?") == {
+            "intent": "stock",
+            "product_query": "Amul Butter",
+        }
     assert observed["timeout"] == 30
     assert observed["request"]["model"] == "llama-3.1-8b-instant"
     assert observed["request"]["response_format"] == {"type": "json_object"}
-    assert "AI_TIMEOUT_SECONDS=100" in caplog.text
+    assert caplog.text.count("AI_TIMEOUT_SECONDS=100") == 1
 
 
 def test_settings_load_ai_values_from_a_dotenv_file(tmp_path):

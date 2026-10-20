@@ -4,6 +4,9 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+MAX_AI_TIMEOUT_SECONDS = 30
+
+
 class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "sqlite:///./vittavani.db"
