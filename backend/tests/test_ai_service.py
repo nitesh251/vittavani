@@ -108,7 +108,7 @@ def test_provider_response_protocol_errors_are_classified_as_network(
 
 def test_provider_error_redacts_opaque_tokens(configured_ai, monkeypatch, caplog):
     opaque_token = "opaque_token_value_0123456789abcdef"
-    model_error_code = "model_not_found_for_llama-3.1-70b-versatile-preview"
+    model_error_code = f"model_not_found_for_{opaque_token}"
     provider_body = json.dumps(
         {"error": {"message": f"Invalid credential {opaque_token}; {model_error_code}"}}
     )
@@ -122,7 +122,7 @@ def test_provider_error_redacts_opaque_tokens(configured_ai, monkeypatch, caplog
 
     assert opaque_token not in caplog.text
     assert "[REDACTED]" in caplog.text
-    assert model_error_code in caplog.text
+    assert "model_not_found_for_[REDACTED]" in caplog.text
 
 
 def test_timeout_while_reading_response_is_classified_as_timeout(

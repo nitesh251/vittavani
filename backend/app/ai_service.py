@@ -12,7 +12,6 @@ _MAX_PROVIDER_RESPONSE_BYTES = 32_768
 _MAX_PROVIDER_ERROR_BYTES = 4_096
 _MAX_LOG_DETAIL_LENGTH = 512
 _MIN_OPAQUE_TOKEN_LENGTH = 32
-_SAFE_OPAQUE_DIAGNOSTIC_PREFIXES = ("model_not_found_for_",)
 _warned_timeout_values: set[int] = set()
 logger = logging.getLogger(__name__)
 
@@ -47,15 +46,13 @@ def _sanitize_provider_detail(detail: str) -> str:
     sanitized = _BEARER_PATTERN.sub("[REDACTED]", sanitized)
     sanitized = _API_KEY_PATTERN.sub("[REDACTED]", sanitized)
     sanitized = _NAMED_SECRET_PATTERN.sub(r"\1=[REDACTED]", sanitized)
-    sanitized = _OPAQUE_TOKEN_PATTERN.sub(_redact_opaque_token, sanitized)
+    sanitized = re.sub(
+        r"(?i)\b(model_not_found_for_)[a-z0-9._-]+",
+        r"\1[REDACTED]",
+        sanitized,
+    )
+    sanitized = _OPAQUE_TOKEN_PATTERN.sub("[REDACTED]", sanitized)
     return " ".join(sanitized.split())[:_MAX_LOG_DETAIL_LENGTH]
-
-
-def _redact_opaque_token(match: re.Match[str]) -> str:
-    token = match.group(0)
-    if token.casefold().startswith(_SAFE_OPAQUE_DIAGNOSTIC_PREFIXES):
-        return token
-    return "[REDACTED]"
 
 
 def _provider_error_message(response_body: bytes) -> str:
@@ -141,6 +138,7 @@ def extract_product_query(question: str) -> dict[str, str | None]:
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             response_body = response.read(_MAX_PROVIDER_RESPONSE_BYTES + 1)
+    # Keep specific handlers ahead of their OSError/URLError base classes.
     except HTTPError as exc:
         try:
             error_body = exc.read(_MAX_PROVIDER_ERROR_BYTES)
