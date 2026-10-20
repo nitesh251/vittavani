@@ -122,6 +122,7 @@ def extract_product_query(question: str) -> dict[str, str | None]:
             "Authorization": "Bearer " + settings.groq_api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": "Vittavani/1.0",
         },
         method="POST",
     )
