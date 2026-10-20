@@ -84,6 +84,8 @@ def test_provider_error_diagnostic_is_truncated(configured_ai, monkeypatch, capl
 def test_provider_response_protocol_errors_are_classified_as_network(
     configured_ai, monkeypatch, caplog
 ):
+    partial_response = "provider returned sensitive partial payload"
+
     class BrokenResponse:
         def __enter__(self):
             return self
@@ -92,7 +94,7 @@ def test_provider_response_protocol_errors_are_classified_as_network(
             return False
 
         def read(self, _limit):
-            raise http.client.IncompleteRead(b"partial response")
+            raise http.client.IncompleteRead(partial_response.encode())
 
     monkeypatch.setattr("app.ai_service.urlopen", lambda *_args, **_kwargs: BrokenResponse())
 
@@ -101,6 +103,22 @@ def test_provider_response_protocol_errors_are_classified_as_network(
 
     assert "category=network" in caplog.text
     assert "IncompleteRead" in caplog.text
+    assert partial_response not in caplog.text
+
+
+def test_provider_error_redacts_opaque_tokens(configured_ai, monkeypatch, caplog):
+    opaque_token = "opaque_token_value_0123456789abcdef"
+    provider_body = json.dumps({"error": {"message": f"Invalid credential {opaque_token}"}})
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(http_error(401, provider_body)),
+    )
+
+    with pytest.raises(AIProviderError):
+        extract_product_query("How much stock is left?")
+
+    assert opaque_token not in caplog.text
+    assert "[REDACTED]" in caplog.text
 
 
 def test_provider_network_and_timeout_errors_have_distinct_diagnostics(

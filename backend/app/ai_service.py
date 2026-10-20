@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 _BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
 _API_KEY_PATTERN = re.compile(r"(?i)\bgsk_[a-z0-9_-]+")
+_OPAQUE_TOKEN_PATTERN = re.compile(r"(?<![a-z0-9])[a-z0-9_-]{32,}(?![a-z0-9])", re.IGNORECASE)
 _NAMED_SECRET_PATTERN = re.compile(
     r"(?i)\b(api[_ -]?key|authorization|access[_ -]?token)\b\s*[:=]\s*[^\s,;]+"
 )
@@ -40,6 +41,7 @@ def _sanitize_provider_detail(detail: str) -> str:
     sanitized = _BEARER_PATTERN.sub("[REDACTED]", sanitized)
     sanitized = _API_KEY_PATTERN.sub("[REDACTED]", sanitized)
     sanitized = _NAMED_SECRET_PATTERN.sub(r"\1=[REDACTED]", sanitized)
+    sanitized = _OPAQUE_TOKEN_PATTERN.sub("[REDACTED]", sanitized)
     return " ".join(sanitized.split())[:_MAX_LOG_DETAIL_LENGTH]
 
 
@@ -169,7 +171,12 @@ def extract_product_query(question: str) -> dict[str, str | None]:
             )
         _log_provider_error(category, detail=str(exc.reason))
         raise AIProviderError(user_message) from exc
-    except (OSError, http.client.HTTPException) as exc:
+    except http.client.HTTPException as exc:
+        _log_provider_error("network", detail=type(exc).__name__)
+        raise AIProviderError(
+            "Could not connect to Groq. Check the backend network connection and try again."
+        ) from exc
+    except OSError as exc:
         _log_provider_error("network", detail=f"{type(exc).__name__}: {exc}")
         raise AIProviderError(
             "Could not connect to Groq. Check the backend network connection and try again."
