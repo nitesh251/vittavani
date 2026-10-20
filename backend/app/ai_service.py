@@ -19,7 +19,7 @@ _BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
 _API_KEY_PATTERN = re.compile(r"(?i)\bgsk_[a-z0-9_-]+")
 # Favor secret safety for unusually long opaque strings, even if some identifiers are redacted.
 _OPAQUE_TOKEN_PATTERN = re.compile(
-    rf"(?<![a-z0-9])[a-z0-9_-]{{{_MIN_OPAQUE_TOKEN_LENGTH},}}(?![a-z0-9])",
+    rf"(?<![a-z0-9_-])[a-z0-9_-]{{{_MIN_OPAQUE_TOKEN_LENGTH},}}(?![a-z0-9_-])",
     re.IGNORECASE,
 )
 _NAMED_SECRET_PATTERN = re.compile(
@@ -182,7 +182,7 @@ def extract_product_query(question: str) -> dict[str, str | None]:
             "Could not connect to Groq. Check the backend network connection and try again."
         ) from exc
     except OSError as exc:
-        _log_provider_error("network", detail=f"{type(exc).__name__}: {exc}")
+        _log_provider_error("network", detail=type(exc).__name__)
         raise AIProviderError(
             "Could not connect to Groq. Check the backend network connection and try again."
         ) from exc
