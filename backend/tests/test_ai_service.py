@@ -5,7 +5,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from app.ai_service import AIProviderError, extract_product_query
+from app.ai_service import AIProviderError, _MAX_LOG_DETAIL_LENGTH, extract_product_query
 from app.config import Settings
 
 
@@ -42,7 +42,13 @@ def http_error(status: int, body: str) -> HTTPError:
 def test_provider_http_errors_are_classified_and_sanitized(
     configured_ai, monkeypatch, caplog, status, category, user_message, provider_message
 ):
-    provider_body = json.dumps({"error": {"message": f"{provider_message} {TEST_API_KEY}"}})
+    provider_body = json.dumps(
+        {
+            "error": {
+                "message": f"{provider_message} {TEST_API_KEY}"
+            }
+        }
+    )
     monkeypatch.setattr(
         "app.ai_service.urlopen",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(http_error(status, provider_body)),
@@ -54,7 +60,7 @@ def test_provider_http_errors_are_classified_and_sanitized(
     assert f"category={category} status={status}" in caplog.text
     assert provider_message in caplog.text
     assert TEST_API_KEY not in caplog.text
-    assert "Bearer " not in caplog.text
+    assert "[REDACTED]" in caplog.text
 
 
 def test_provider_error_diagnostic_is_truncated(configured_ai, monkeypatch, caplog):
@@ -68,7 +74,8 @@ def test_provider_error_diagnostic_is_truncated(configured_ai, monkeypatch, capl
     with pytest.raises(AIProviderError):
         extract_product_query("How much stock is left?")
 
-    assert len(caplog.records[-1].getMessage()) < 700
+    assert len(caplog.records[-1].args[2]) <= _MAX_LOG_DETAIL_LENGTH
+    assert len(caplog.records[-1].args[2]) < len(long_message)
     assert "category=model_or_request status=400" in caplog.text
 
 

@@ -1,7 +1,7 @@
+import http.client
 import json
 import logging
 import re
-import socket
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -37,7 +37,7 @@ def _sanitize_provider_detail(detail: str) -> str:
     sanitized = detail
     if settings.groq_api_key:
         sanitized = sanitized.replace(settings.groq_api_key, "[REDACTED]")
-    sanitized = _BEARER_PATTERN.sub("******", sanitized)
+    sanitized = _BEARER_PATTERN.sub("[REDACTED]", sanitized)
     sanitized = _API_KEY_PATTERN.sub("[REDACTED]", sanitized)
     sanitized = _NAMED_SECRET_PATTERN.sub(r"\1=[REDACTED]", sanitized)
     return " ".join(sanitized.split())[:_MAX_LOG_DETAIL_LENGTH]
@@ -120,7 +120,7 @@ def extract_product_query(question: str) -> dict[str, str | None]:
     except HTTPError as exc:
         try:
             error_body = exc.read(_MAX_PROVIDER_ERROR_BYTES)
-        except OSError:
+        except (OSError, http.client.HTTPException):
             error_body = b""
         provider_message = _provider_error_message(error_body)
         status = exc.code
@@ -147,11 +147,11 @@ def extract_product_query(question: str) -> dict[str, str | None]:
             user_message = "Groq request failed. Check backend logs for the provider status."
         _log_provider_error(category, status=status, detail=provider_message)
         raise AIProviderError(user_message) from exc
-    except (TimeoutError, socket.timeout) as exc:
+    except TimeoutError as exc:
         _log_provider_error("timeout", detail=f"Timeout after {timeout_seconds} seconds")
         raise AIProviderError("Groq request timed out. Try again or use Normal Search.") from exc
     except URLError as exc:
-        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+        if isinstance(exc.reason, TimeoutError):
             category = "timeout"
             user_message = "Groq request timed out. Try again or use Normal Search."
         else:
