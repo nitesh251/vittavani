@@ -57,6 +57,21 @@ def test_provider_http_errors_are_classified_and_sanitized(
     assert "Bearer " not in caplog.text
 
 
+def test_provider_error_diagnostic_is_truncated(configured_ai, monkeypatch, caplog):
+    long_message = "provider detail " * 100
+    provider_body = json.dumps({"error": {"message": long_message}})
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(http_error(400, provider_body)),
+    )
+
+    with pytest.raises(AIProviderError):
+        extract_product_query("How much stock is left?")
+
+    assert len(caplog.records[-1].getMessage()) < 700
+    assert "category=model_or_request status=400" in caplog.text
+
+
 def test_provider_network_and_timeout_errors_have_distinct_diagnostics(
     configured_ai, monkeypatch, caplog
 ):
@@ -79,10 +94,37 @@ def test_provider_network_and_timeout_errors_have_distinct_diagnostics(
     assert "DNS unavailable" in caplog.text
 
 
+def test_url_error_with_timeout_reason_is_logged_as_timeout(configured_ai, monkeypatch, caplog):
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(URLError(TimeoutError("read timed out"))),
+    )
+
+    with pytest.raises(AIProviderError, match="timed out"):
+        extract_product_query("How much stock is left?")
+
+    assert "category=timeout" in caplog.text
+
+
 def test_provider_rejects_malformed_json_with_backend_diagnostic(
     configured_ai, monkeypatch, caplog
 ):
     monkeypatch.setattr("app.ai_service.urlopen", lambda *_args, **_kwargs: BytesIO(b"{invalid"))
+
+    with pytest.raises(AIProviderError, match="invalid response"):
+        extract_product_query("How much stock is left?")
+
+    assert "category=malformed_response" in caplog.text
+
+
+def test_provider_rejects_malformed_structured_content(configured_ai, monkeypatch, caplog):
+    provider_response = json.dumps(
+        {"choices": [{"message": {"content": "{invalid json"}}]}
+    ).encode()
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: BytesIO(provider_response),
+    )
 
     with pytest.raises(AIProviderError, match="invalid response"):
         extract_product_query("How much stock is left?")
@@ -96,7 +138,13 @@ def test_provider_sends_structured_output_and_caps_configured_timeout(
     provider_response = json.dumps(
         {
             "choices": [
-                {"message": {"content": json.dumps({"intent": "stock", "product_query": "Amul Butter"})}}
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {"intent": "stock", "product_query": "Amul Butter"}
+                        )
+                    }
+                }
             ]
         }
     ).encode()

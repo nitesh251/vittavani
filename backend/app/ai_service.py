@@ -129,10 +129,16 @@ def extract_product_query(question: str) -> dict[str, str | None]:
             user_message = "Groq rejected its API credentials. Check GROQ_API_KEY on the backend."
         elif status in (400, 404, 422):
             category = "model_or_request"
-            user_message = "Groq rejected the configured model or request. Check AI_MODEL and model compatibility."
+            user_message = (
+                "Groq rejected the configured model or request. "
+                "Check AI_MODEL and model compatibility."
+            )
         elif status == 429:
             category = "rate_limit"
-            user_message = "Groq rate limit or quota reached. Try again later or check your Groq account limits."
+            user_message = (
+                "Groq rate limit or quota reached. Try again later or check your "
+                "Groq account limits."
+            )
         elif status >= 500:
             category = "provider_server"
             user_message = "Groq is temporarily unavailable. Try again later."
@@ -150,7 +156,9 @@ def extract_product_query(question: str) -> dict[str, str | None]:
             user_message = "Groq request timed out. Try again or use Normal Search."
         else:
             category = "network"
-            user_message = "Could not connect to Groq. Check the backend network connection and try again."
+            user_message = (
+                "Could not connect to Groq. Check the backend network connection and try again."
+            )
         _log_provider_error(category, detail=str(exc.reason))
         raise AIProviderError(user_message) from exc
     except OSError as exc:
@@ -165,23 +173,36 @@ def extract_product_query(question: str) -> dict[str, str | None]:
     try:
         payload = json.loads(response_body)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        _log_provider_error("malformed_response", detail=response_body.decode("utf-8", errors="replace"))
-        raise AIProviderError("AI Assistant returned an invalid response. Try Normal Search.") from exc
+        _log_provider_error(
+            "malformed_response",
+            detail=response_body.decode("utf-8", errors="replace"),
+        )
+        raise AIProviderError(
+            "AI Assistant returned an invalid response. Try Normal Search."
+        ) from exc
 
     try:
         content = payload["choices"][0]["message"]["content"]
         parsed = json.loads(content)
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         _log_provider_error("malformed_response", detail=str(exc))
-        raise AIProviderError("AI Assistant returned an invalid response. Try Normal Search.") from exc
+        raise AIProviderError(
+            "AI Assistant returned an invalid response. Try Normal Search."
+        ) from exc
 
     if not isinstance(parsed, dict):
-        _log_provider_error("malformed_response", detail="Structured response was not a JSON object")
+        _log_provider_error(
+            "malformed_response",
+            detail="Structured response was not a JSON object",
+        )
         raise AIProviderError("AI Assistant returned an invalid response. Try Normal Search.")
     intent = parsed.get("intent")
     product_query = parsed.get("product_query")
     if not isinstance(intent, str) or intent not in AI_INTENT_MAP:
-        _log_provider_error("malformed_response", detail="Structured response contained an unsupported intent")
+        _log_provider_error(
+            "malformed_response",
+            detail="Structured response contained an unsupported intent",
+        )
         raise AIProviderError("AI Assistant returned an unsupported intent. Try Normal Search.")
     if product_query is not None and (
         not isinstance(product_query, str)
@@ -189,7 +210,10 @@ def extract_product_query(question: str) -> dict[str, str | None]:
         or len(product_query) > 180
         or any(ord(char) < 32 for char in product_query)
     ):
-        _log_provider_error("malformed_response", detail="Structured response contained an invalid product query")
+        _log_provider_error(
+            "malformed_response",
+            detail="Structured response contained an invalid product query",
+        )
         raise AIProviderError("AI Assistant returned an invalid product query. Try Normal Search.")
     return {
         "intent": intent,
