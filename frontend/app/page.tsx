@@ -602,18 +602,18 @@ export default function Home() {
         <aside className="sidebar" aria-label="Workspace navigation">
           <p className="sidebar-caption">WORKSPACE</p>
           <nav className="sidebar-nav">
-            <a className={activeSection === "dashboard" ? "nav-active" : ""} href="#dashboard" onClick={() => setActiveSection("dashboard")}><span className="nav-icon" aria-hidden="true">▦</span>Dashboard</a>
+            <a className={activeSection === "dashboard" ? "nav-active" : ""} aria-current={activeSection === "dashboard" ? "page" : undefined} href="#dashboard" onClick={() => setActiveSection("dashboard")}><span className="nav-icon" aria-hidden="true">▦</span>Dashboard</a>
             <span className="nav-unavailable" title="Sales requires a backend module before it can be enabled"><span className="nav-icon" aria-hidden="true">↗</span>Sales<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <a className={activeSection === "inventory" ? "nav-active" : ""} href="#inventory" onClick={() => setActiveSection("inventory")}><span className="nav-icon" aria-hidden="true">▤</span>Inventory</a>
+            <a className={activeSection === "inventory" ? "nav-active" : ""} aria-current={activeSection === "inventory" ? "page" : undefined} href="#inventory" onClick={() => setActiveSection("inventory")}><span className="nav-icon" aria-hidden="true">▤</span>Inventory</a>
             <span className="nav-unavailable" title="Customer udhar requires a backend ledger before it can be enabled"><span className="nav-icon" aria-hidden="true">♙</span>Customers &amp; Udhar<span className="sr-only">, not available yet</span><small>Later</small></span>
             <span className="nav-unavailable" title="Payment workflows are not implemented"><span className="nav-icon" aria-hidden="true">↔</span>Payments &amp; Collections<span className="sr-only">, not available yet</span><small>Later</small></span>
             <span className="nav-unavailable" title="Purchasing workflows are not implemented"><span className="nav-icon" aria-hidden="true">▣</span>Purchases<span className="sr-only">, not available yet</span><small>Later</small></span>
             <span className="nav-unavailable" title="Expense workflows are not implemented"><span className="nav-icon" aria-hidden="true">◷</span>Expenses<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <a className={activeSection === "locations" ? "nav-active" : ""} href="#locations" onClick={() => setActiveSection("locations")}><span className="nav-icon" aria-hidden="true">⌂</span>Locations</a>
+            <a className={activeSection === "locations" ? "nav-active" : ""} aria-current={activeSection === "locations" ? "page" : undefined} href="#locations" onClick={() => setActiveSection("locations")}><span className="nav-icon" aria-hidden="true">⌂</span>Locations</a>
             <span className="nav-unavailable" title="Financial reporting is not implemented"><span className="nav-icon" aria-hidden="true">▥</span>Reports<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <a className={activeSection === "ask" ? "nav-active" : ""} href="#ask" onClick={() => setActiveSection("ask")}><span className="nav-icon" aria-hidden="true">✦</span>Ask Vittavani</a>
+            <a className={activeSection === "ask" ? "nav-active" : ""} aria-current={activeSection === "ask" ? "page" : undefined} href="#ask" onClick={() => setActiveSection("ask")}><span className="nav-icon" aria-hidden="true">✦</span>Ask Vittavani</a>
             <span className="nav-unavailable" title="Account settings are not implemented"><span className="nav-icon" aria-hidden="true">⚙</span>Settings<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <a className={activeSection === "stock-movements" ? "nav-active" : ""} href="#stock-movements" onClick={() => setActiveSection("stock-movements")}><span className="nav-icon" aria-hidden="true">↕</span>Stock movements</a>
+            <a className={activeSection === "stock-movements" ? "nav-active" : ""} aria-current={activeSection === "stock-movements" ? "page" : undefined} href="#stock-movements" onClick={() => setActiveSection("stock-movements")}><span className="nav-icon" aria-hidden="true">↕</span>Stock movements</a>
           </nav>
           <div className="sidebar-assistant">
             <div className="sidebar-assistant-icon">✦</div>
@@ -969,12 +969,12 @@ export default function Home() {
         ) : (
           <div className="data-card movement-table-wrap">
             <div className="movement-table" role="table" aria-label="Stock movement history">
-              <div className="movement-row movement-header" role="row"><span>Product / movement</span><span>Quantity</span><span>Route / note</span><span>Recorded</span></div>
+              <div className="movement-row movement-header" role="row"><span role="columnheader">Product / movement</span><span role="columnheader">Quantity</span><span role="columnheader">Route / note</span><span role="columnheader">Recorded</span></div>
               {stockMovements.map((movement) => <div className="movement-row" role="row" key={movement.id}>
-                <span><strong>{movement.product_name}</strong><small>{movementLabel(movement.movement_type)}</small></span>
-                <span className="stock-quantity">{movement.display_quantity}</span>
-                <span><small>{movement.source_location ? `${movement.source_location} → ` : ""}{movement.destination_location ?? movement.source_location ?? "Location not recorded"}{movement.note ? ` · ${movement.note}` : ""}</small></span>
-                <time dateTime={movement.created_at}>{new Date(movement.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
+                <span role="cell"><strong>{movement.product_name}</strong><small>{movementLabel(movement.movement_type)}</small></span>
+                <span className="stock-quantity" role="cell">{movement.display_quantity}</span>
+                <span role="cell"><small>{movement.source_location ? `${movement.source_location} → ` : ""}{movement.destination_location ?? movement.source_location ?? "Location not recorded"}{movement.note ? ` · ${movement.note}` : ""}</small></span>
+                <time role="cell" dateTime={movement.created_at}>{new Date(movement.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
               </div>)}
             </div>
           </div>
@@ -1040,7 +1040,7 @@ export default function Home() {
               <span aria-hidden="true">{listening ? "■" : "🎙"}</span>
               {listening ? "Stop listening" : "Speak"}
             </button>
-            <span className="text-hint" role="status">
+            <span className="text-hint">
               {listening ? "Listening… speak now. Your words will appear above." : "Type a question or use your microphone"}
             </span>
             <button className="submit" type="submit" disabled={loading || !query.trim()}>

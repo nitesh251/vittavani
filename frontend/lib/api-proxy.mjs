@@ -26,6 +26,7 @@ function isAllowedDevOrigin(request, environment) {
 
 function isCrossSiteRequest(request) {
   const site = request.headers.get("sec-fetch-site");
+  // Same-site origins are validated against the explicit development-origin allowlist.
   return site === "cross-site";
 }
 
