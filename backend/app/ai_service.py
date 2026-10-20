@@ -113,7 +113,15 @@ def extract_product_query(question: str) -> dict[str, str | None]:
         },
         method="POST",
     )
-    timeout_seconds = max(1, min(settings.ai_timeout_seconds, _MAX_PROVIDER_TIMEOUT_SECONDS))
+    configured_timeout = settings.ai_timeout_seconds
+    timeout_seconds = max(1, min(configured_timeout, _MAX_PROVIDER_TIMEOUT_SECONDS))
+    if configured_timeout != timeout_seconds:
+        logger.warning(
+            "AI_TIMEOUT_SECONDS=%s is outside the supported 1–%s second range; using %s seconds",
+            configured_timeout,
+            _MAX_PROVIDER_TIMEOUT_SECONDS,
+            timeout_seconds,
+        )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             response_body = response.read(_MAX_PROVIDER_RESPONSE_BYTES + 1)
@@ -175,7 +183,7 @@ def extract_product_query(question: str) -> dict[str, str | None]:
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         _log_provider_error(
             "malformed_response",
-            detail=response_body.decode("utf-8", errors="replace"),
+            detail=f"Invalid JSON response body ({len(response_body)} bytes)",
         )
         raise AIProviderError(
             "AI Assistant returned an invalid response. Try Normal Search."

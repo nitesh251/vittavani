@@ -116,12 +116,15 @@ def test_url_error_with_timeout_reason_is_logged_as_timeout(configured_ai, monke
 def test_provider_rejects_malformed_json_with_backend_diagnostic(
     configured_ai, monkeypatch, caplog
 ):
-    monkeypatch.setattr("app.ai_service.urlopen", lambda *_args, **_kwargs: BytesIO(b"{invalid"))
+    raw_body = b'{"error":"gsk_fake_diagnostic_secret"'
+    monkeypatch.setattr("app.ai_service.urlopen", lambda *_args, **_kwargs: BytesIO(raw_body))
 
     with pytest.raises(AIProviderError, match="invalid response"):
         extract_product_query("How much stock is left?")
 
     assert "category=malformed_response" in caplog.text
+    assert "gsk_fake_diagnostic_secret" not in caplog.text
+    assert f"{len(raw_body)} bytes" in caplog.text
 
 
 def test_provider_rejects_malformed_structured_content(configured_ai, monkeypatch, caplog):
@@ -140,7 +143,7 @@ def test_provider_rejects_malformed_structured_content(configured_ai, monkeypatc
 
 
 def test_provider_sends_structured_output_and_caps_configured_timeout(
-    configured_ai, monkeypatch
+    configured_ai, monkeypatch, caplog
 ):
     provider_response = json.dumps(
         {
@@ -172,6 +175,7 @@ def test_provider_sends_structured_output_and_caps_configured_timeout(
     assert observed["timeout"] == 30
     assert observed["request"]["model"] == "llama-3.1-8b-instant"
     assert observed["request"]["response_format"] == {"type": "json_object"}
+    assert "AI_TIMEOUT_SECONDS=100" in caplog.text
 
 
 def test_settings_load_ai_values_from_a_dotenv_file(tmp_path):
