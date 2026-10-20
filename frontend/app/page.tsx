@@ -595,9 +595,9 @@ export default function Home() {
               <option value="en-IN">English</option>
             </select>
           </label>
-          <a className="notification-button" href="#stock-alerts" aria-label={`Stock alerts: ${dashboard ? dashboard.low_stock_count + dashboard.out_of_stock_count : 0}`}>
+          <a className="notification-button" href="#stock-alerts" aria-label={`Stock alerts: ${stockAlertRows.length}`}>
             <span aria-hidden="true">♧</span>
-            {dashboard && dashboard.low_stock_count + dashboard.out_of_stock_count > 0 && <span className="notification-count">{dashboard.low_stock_count + dashboard.out_of_stock_count}</span>}
+            {stockAlertRows.length > 0 && <span className="notification-count">{stockAlertRows.length}</span>}
           </a>
           <div className="business-context"><span className="business-avatar">V</span><span><strong>Business workspace</strong><small>A product of Vinayaka Services</small></span></div>
         </div>
@@ -608,16 +608,16 @@ export default function Home() {
           <p className="sidebar-caption">WORKSPACE</p>
           <nav className="sidebar-nav">
             <a className={activeSection === "dashboard" ? "nav-active" : ""} href="#dashboard" onClick={() => setActiveSection("dashboard")}><span className="nav-icon">▦</span>Dashboard</a>
-            <span className="nav-unavailable" title="Sales requires a backend module before it can be enabled"><span className="nav-icon">↗</span>Sales<small>Later</small></span>
+            <span className="nav-unavailable" aria-disabled="true" title="Sales requires a backend module before it can be enabled"><span className="nav-icon">↗</span>Sales<small>Later</small></span>
             <a className={activeSection === "inventory" ? "nav-active" : ""} href="#inventory" onClick={() => setActiveSection("inventory")}><span className="nav-icon">▤</span>Inventory</a>
-            <span className="nav-unavailable" title="Customer udhar requires a backend ledger before it can be enabled"><span className="nav-icon">♙</span>Customers &amp; Udhar<small>Later</small></span>
-            <span className="nav-unavailable" title="Payment workflows are not implemented"><span className="nav-icon">↔</span>Payments &amp; Collections<small>Later</small></span>
-            <span className="nav-unavailable" title="Purchasing workflows are not implemented"><span className="nav-icon">▣</span>Purchases<small>Later</small></span>
-            <span className="nav-unavailable" title="Expense workflows are not implemented"><span className="nav-icon">◷</span>Expenses<small>Later</small></span>
+            <span className="nav-unavailable" aria-disabled="true" title="Customer udhar requires a backend ledger before it can be enabled"><span className="nav-icon">♙</span>Customers &amp; Udhar<small>Later</small></span>
+            <span className="nav-unavailable" aria-disabled="true" title="Payment workflows are not implemented"><span className="nav-icon">↔</span>Payments &amp; Collections<small>Later</small></span>
+            <span className="nav-unavailable" aria-disabled="true" title="Purchasing workflows are not implemented"><span className="nav-icon">▣</span>Purchases<small>Later</small></span>
+            <span className="nav-unavailable" aria-disabled="true" title="Expense workflows are not implemented"><span className="nav-icon">◷</span>Expenses<small>Later</small></span>
             <a className={activeSection === "locations" ? "nav-active" : ""} href="#locations" onClick={() => setActiveSection("locations")}><span className="nav-icon">⌂</span>Locations</a>
-            <span className="nav-unavailable" title="Financial reporting is not implemented"><span className="nav-icon">▥</span>Reports<small>Later</small></span>
+            <span className="nav-unavailable" aria-disabled="true" title="Financial reporting is not implemented"><span className="nav-icon">▥</span>Reports<small>Later</small></span>
             <a className={activeSection === "ask" ? "nav-active" : ""} href="#ask" onClick={() => setActiveSection("ask")}><span className="nav-icon">✦</span>Ask Vittavani</a>
-            <span className="nav-unavailable" title="Account settings are not implemented"><span className="nav-icon">⚙</span>Settings<small>Later</small></span>
+            <span className="nav-unavailable" aria-disabled="true" title="Account settings are not implemented"><span className="nav-icon">⚙</span>Settings<small>Later</small></span>
             <a className={activeSection === "stock-movements" ? "nav-active" : ""} href="#stock-movements" onClick={() => setActiveSection("stock-movements")}><span className="nav-icon">↕</span>Stock movements</a>
           </nav>
           <div className="sidebar-assistant">
@@ -722,7 +722,7 @@ export default function Home() {
                     <h2 id="low-stock-title">Stock alerts</h2>
                     <p>Low and out-of-stock products to review</p>
                   </div>
-                  <span className="count-pill">{dashboard.low_stock_count + dashboard.out_of_stock_count}</span>
+                  <span className="count-pill">{stockAlertRows.length}</span>
                 </div>
                 {stockAlertRows.length === 0 ? (
                   <p className="card-empty">No low-stock alerts. Products without a configured minimum are not counted.</p>
