@@ -169,7 +169,7 @@ def extract_product_query(question: str) -> dict[str, str | None]:
             )
         _log_provider_error(category, detail=str(exc.reason))
         raise AIProviderError(user_message) from exc
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         _log_provider_error("network", detail=f"{type(exc).__name__}: {exc}")
         raise AIProviderError(
             "Could not connect to Groq. Check the backend network connection and try again."

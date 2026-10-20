@@ -1,4 +1,5 @@
 from io import BytesIO
+import http.client
 import json
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -74,9 +75,32 @@ def test_provider_error_diagnostic_is_truncated(configured_ai, monkeypatch, capl
     with pytest.raises(AIProviderError):
         extract_product_query("How much stock is left?")
 
-    assert len(caplog.records[-1].args[2]) <= _MAX_LOG_DETAIL_LENGTH
-    assert len(caplog.records[-1].args[2]) < len(long_message)
-    assert "category=model_or_request status=400" in caplog.text
+    record = next(record for record in caplog.records if "category=model_or_request" in record.getMessage())
+    diagnostic = record.getMessage().split("provider_message=", 1)[1]
+    assert len(diagnostic) <= _MAX_LOG_DETAIL_LENGTH
+    assert len(diagnostic) < len(long_message)
+
+
+def test_provider_response_protocol_errors_are_classified_as_network(
+    configured_ai, monkeypatch, caplog
+):
+    class BrokenResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            raise http.client.IncompleteRead(b"partial response")
+
+    monkeypatch.setattr("app.ai_service.urlopen", lambda *_args, **_kwargs: BrokenResponse())
+
+    with pytest.raises(AIProviderError, match="connect to Groq"):
+        extract_product_query("How much stock is left?")
+
+    assert "category=network" in caplog.text
+    assert "IncompleteRead" in caplog.text
 
 
 def test_provider_network_and_timeout_errors_have_distinct_diagnostics(
