@@ -26,7 +26,7 @@ function isAllowedDevOrigin(request, environment) {
 
 function isCrossSiteRequest(request) {
   const site = request.headers.get("sec-fetch-site");
-  return site === "cross-site" || site === "same-site";
+  return site === "cross-site";
 }
 
 export async function proxyApiRequest(request, path, environment, fetcher) {

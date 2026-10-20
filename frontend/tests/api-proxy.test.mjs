@@ -89,6 +89,21 @@ test("rejects cross-site GET requests", async () => {
   assert.match((await response.json()).detail, /Cross-site requests/);
 });
 
+test("allows explicitly configured same-site frontend origins", async () => {
+  const response = await proxyApiRequest(
+    request("dashboard", "GET", {
+      origin: "http://localhost:3001",
+      "sec-fetch-site": "same-site",
+    }),
+    ["dashboard"],
+    { ...development, DEV_FRONTEND_ORIGINS: "http://localhost:3001" },
+    async () => Response.json({ ok: true }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+});
+
 test("rejects a foreign Origin on read requests", async () => {
   const response = await proxyApiRequest(
     request("dashboard", "GET", { origin: "http://forged.local" }),
