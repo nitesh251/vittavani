@@ -12,11 +12,16 @@ _MAX_PROVIDER_RESPONSE_BYTES = 32_768
 _MAX_PROVIDER_ERROR_BYTES = 4_096
 _MAX_LOG_DETAIL_LENGTH = 512
 _MAX_PROVIDER_TIMEOUT_SECONDS = 30
+_MIN_OPAQUE_TOKEN_LENGTH = 32
 logger = logging.getLogger(__name__)
 
 _BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
 _API_KEY_PATTERN = re.compile(r"(?i)\bgsk_[a-z0-9_-]+")
-_OPAQUE_TOKEN_PATTERN = re.compile(r"(?<![a-z0-9])[a-z0-9_-]{32,}(?![a-z0-9])", re.IGNORECASE)
+# Favor secret safety for unusually long opaque strings, even if some identifiers are redacted.
+_OPAQUE_TOKEN_PATTERN = re.compile(
+    rf"(?<![a-z0-9])[a-z0-9_-]{{{_MIN_OPAQUE_TOKEN_LENGTH},}}(?![a-z0-9])",
+    re.IGNORECASE,
+)
 _NAMED_SECRET_PATTERN = re.compile(
     r"(?i)\b(api[_ -]?key|authorization|access[_ -]?token)\b\s*[:=]\s*[^\s,;]+"
 )
@@ -199,8 +204,8 @@ def extract_product_query(question: str) -> dict[str, str | None]:
     try:
         content = payload["choices"][0]["message"]["content"]
         parsed = json.loads(content)
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        _log_provider_error("malformed_response", detail=str(exc))
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
+        _log_provider_error("malformed_response", detail=type(exc).__name__)
         raise AIProviderError(
             "AI Assistant returned an invalid response. Try Normal Search."
         ) from exc

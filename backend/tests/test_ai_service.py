@@ -165,6 +165,7 @@ def test_provider_rejects_malformed_json_with_backend_diagnostic(
         extract_product_query("How much stock is left?")
 
     assert "category=malformed_response" in caplog.text
+    assert "{invalid json" not in caplog.text
     assert "gsk_fake_diagnostic_secret" not in caplog.text
     assert f"{len(raw_body)} bytes" in caplog.text
 
