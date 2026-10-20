@@ -86,7 +86,19 @@ test("rejects cross-site GET requests", async () => {
   );
 
   assert.equal(response.status, 403);
-  assert.match((await response.json()).detail, /Cross-site requests/);
+  assert.match((await response.json()).detail, /Cross-site or unverified same-site requests/);
+});
+
+test("rejects same-site GET requests without an Origin header", async () => {
+  const response = await proxyApiRequest(
+    request("dashboard", "GET", { "sec-fetch-site": "same-site" }),
+    ["dashboard"],
+    development,
+    fetch,
+  );
+
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).detail, /unverified same-site requests/);
 });
 
 test("allows explicitly configured same-site frontend origins", async () => {

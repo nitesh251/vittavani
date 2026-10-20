@@ -24,10 +24,10 @@ function isAllowedDevOrigin(request, environment) {
   }
 }
 
-function isCrossSiteRequest(request) {
+function isUntrustedFetchSite(request) {
   const site = request.headers.get("sec-fetch-site");
-  // Same-site origins are validated against the explicit development-origin allowlist.
-  return site === "cross-site";
+  // Same-site origins require an Origin header to be checked against the allowlist.
+  return site === "cross-site" || (site === "same-site" && !request.headers.get("origin"));
 }
 
 export async function proxyApiRequest(request, path, environment, fetcher) {
@@ -41,8 +41,11 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
     );
   }
 
-  if (isCrossSiteRequest(request)) {
-    return Response.json({ detail: "Cross-site requests are not allowed." }, { status: 403 });
+  if (isUntrustedFetchSite(request)) {
+    return Response.json(
+      { detail: "Cross-site or unverified same-site requests are not allowed." },
+      { status: 403 },
+    );
   }
   if (request.headers.get("origin") && !isAllowedDevOrigin(request, environment)) {
     return Response.json(

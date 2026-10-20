@@ -969,13 +969,17 @@ export default function Home() {
         ) : (
           <div className="data-card movement-table-wrap">
             <div className="movement-table" role="table" aria-label="Stock movement history">
-              <div className="movement-row movement-header" role="row"><span role="columnheader">Product / movement</span><span role="columnheader">Quantity</span><span role="columnheader">Route / note</span><span role="columnheader">Recorded</span></div>
-              {stockMovements.map((movement) => <div className="movement-row" role="row" key={movement.id}>
-                <span role="cell"><strong>{movement.product_name}</strong><small>{movementLabel(movement.movement_type)}</small></span>
-                <span className="stock-quantity" role="cell">{movement.display_quantity}</span>
-                <span role="cell"><small>{movement.source_location ? `${movement.source_location} → ` : ""}{movement.destination_location ?? movement.source_location ?? "Location not recorded"}{movement.note ? ` · ${movement.note}` : ""}</small></span>
-                <time role="cell" dateTime={movement.created_at}>{new Date(movement.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
-              </div>)}
+              <div role="rowgroup">
+                <div className="movement-row movement-header" role="row"><span role="columnheader">Product / movement</span><span role="columnheader">Quantity</span><span role="columnheader">Route / note</span><span role="columnheader">Recorded</span></div>
+              </div>
+              <div role="rowgroup">
+                {stockMovements.map((movement) => <div className="movement-row" role="row" key={movement.id}>
+                  <span role="cell"><strong>{movement.product_name}</strong><small>{movementLabel(movement.movement_type)}</small></span>
+                  <span className="stock-quantity" role="cell">{movement.display_quantity}</span>
+                  <span role="cell"><small>{movement.source_location ? `${movement.source_location} → ` : ""}{movement.destination_location ?? movement.source_location ?? "Location not recorded"}{movement.note ? ` · ${movement.note}` : ""}</small></span>
+                  <time role="cell" dateTime={movement.created_at}>{new Date(movement.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
+                </div>)}
+              </div>
             </div>
           </div>
         )}
