@@ -205,7 +205,7 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
 .global-search > span { font-size: 21px; line-height: 1; }
 .global-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 13px; }
 .global-search input::placeholder { color: #98a39d; }
-.global-search kbd { border: 1px solid #e1e7e3; border-radius: 5px; padding: 2px 6px; background: white; color: #94a099; font: 11px ui-monospace, monospace; }
+.stock-alert-anchor { display: block; height: 0; scroll-margin-top: 92px; }
 .topbar-actions { display: flex; align-items: center; gap: 18px; margin-left: auto; }
 .top-language { display: flex; align-items: center; gap: 6px; color: #5e7067; }
 .language-globe { font-size: 18px; color: #61756b; }

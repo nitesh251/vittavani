@@ -1,6 +1,7 @@
 const decimalPattern = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/;
 
 function parseDecimal(value) {
+  // Keep parsing bounded; over-limit values are treated as invalid and sorted last.
   if (value.length > 128) return null;
   const match = decimalPattern.exec(value);
   if (!match) return null;

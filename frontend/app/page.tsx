@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { compareDecimalStrings } from "../lib/quantity.mjs";
 type Answer = {
   message: string;
@@ -96,6 +96,20 @@ const stockStatusLabels = {
   out_of_stock: "Out of stock",
   inactive: "Inactive",
 };
+const navigationItems = [
+  { section: "dashboard", label: "Dashboard", icon: "▦" },
+  { label: "Sales", icon: "↗", reason: "Sales requires a backend module before it can be enabled." },
+  { section: "inventory", label: "Inventory", icon: "▤" },
+  { label: "Customers & Udhar", icon: "♙", reason: "Customer udhar requires a backend ledger before it can be enabled." },
+  { label: "Payments & Collections", icon: "↔", reason: "Payment workflows are not implemented." },
+  { label: "Purchases", icon: "▣", reason: "Purchasing workflows are not implemented." },
+  { label: "Expenses", icon: "◷", reason: "Expense workflows are not implemented." },
+  { section: "locations", label: "Locations", icon: "⌂" },
+  { label: "Reports", icon: "▥", reason: "Financial reporting is not implemented." },
+  { section: "ask", label: "Ask Vittavani", icon: "✦" },
+  { label: "Settings", icon: "⚙", reason: "Account settings are not implemented." },
+  { section: "stock-movements", label: "Stock movements", icon: "↕" },
+] as const;
 const headers = { "Content-Type": "application/json" };
 const emptyProductForm = {
   name: "",
@@ -519,8 +533,11 @@ export default function Home() {
     setSpeaking(false);
   }
 
-  const locationNames = new Map(locations.map((location) => [location.id, location.full_name]));
-  const visibleProducts = products
+  const locationNames = useMemo(
+    () => new Map(locations.map((location) => [location.id, location.full_name])),
+    [locations],
+  );
+  const visibleProducts = useMemo(() => products
     .filter((product) => {
       const search = productSearch.trim().toLocaleLowerCase();
       const matchesSearch = !search || [
@@ -534,14 +551,16 @@ export default function Home() {
     })
     .sort((left, right) => productSort === "quantity"
       ? compareDecimalStrings(right.quantity, left.quantity) || left.name.localeCompare(right.name)
-      : left.name.localeCompare(right.name));
-  const aiStatusMessage = aiStatusError
+      : left.name.localeCompare(right.name)),
+  [products, productSearch, productStatusFilter, productSort]);
+  const aiStatusMessage = useMemo(() => aiStatusError
     ? aiStatusError
     : aiConfigured
       ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Stock facts are still fetched from your inventory.`
-      : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search.";
-  const activeProductCount = products.filter((product) => product.active).length;
-  const stockAlertRows = products
+      : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search.",
+  [aiStatusError, aiConfigured, aiProvider, aiModel]);
+  const activeProductCount = useMemo(() => products.filter((product) => product.active).length, [products]);
+  const stockAlertRows = useMemo(() => products
     .filter((product): product is InventoryProduct & { stock_status: "low_stock" | "out_of_stock" } =>
       product.stock_status === "low_stock" || product.stock_status === "out_of_stock")
     .map((product) => ({
@@ -552,11 +571,12 @@ export default function Home() {
       location: product.stock_status === "out_of_stock"
         ? "No available stock"
         : product.balances
-        .filter((balance) => compareDecimalStrings(balance.quantity, "0") > 0)
-        .map((balance) => `${locationNames.get(balance.location_id) ?? balance.location_name}: ${balance.display_quantity}`)
-        .join(" · ") || "Location not recorded",
+          .filter((balance) => compareDecimalStrings(balance.quantity, "0") > 0)
+          .map((balance) => `${locationNames.get(balance.location_id) ?? balance.location_name}: ${balance.display_quantity}`)
+          .join(" · ") || "Location not recorded",
       status: product.stock_status,
-    }));
+    })),
+  [products, locationNames]);
 
   return (
     <main className="page">
@@ -580,7 +600,6 @@ export default function Home() {
             placeholder="Search products, aliases, SKU"
             aria-label="Search inventory products"
           />
-          <kbd>/</kbd>
         </label>
         <div className="topbar-actions">
           <label className="top-language" htmlFor="top-language">
@@ -602,18 +621,25 @@ export default function Home() {
         <aside className="sidebar" aria-label="Workspace navigation">
           <p className="sidebar-caption">WORKSPACE</p>
           <nav className="sidebar-nav">
-            <a className={activeSection === "dashboard" ? "nav-active" : ""} aria-current={activeSection === "dashboard" ? "page" : undefined} href="#dashboard" onClick={() => setActiveSection("dashboard")}><span className="nav-icon" aria-hidden="true">▦</span>Dashboard</a>
-            <span className="nav-unavailable" title="Sales requires a backend module before it can be enabled"><span className="nav-icon" aria-hidden="true">↗</span>Sales<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <a className={activeSection === "inventory" ? "nav-active" : ""} aria-current={activeSection === "inventory" ? "page" : undefined} href="#inventory" onClick={() => setActiveSection("inventory")}><span className="nav-icon" aria-hidden="true">▤</span>Inventory</a>
-            <span className="nav-unavailable" title="Customer udhar requires a backend ledger before it can be enabled"><span className="nav-icon" aria-hidden="true">♙</span>Customers &amp; Udhar<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <span className="nav-unavailable" title="Payment workflows are not implemented"><span className="nav-icon" aria-hidden="true">↔</span>Payments &amp; Collections<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <span className="nav-unavailable" title="Purchasing workflows are not implemented"><span className="nav-icon" aria-hidden="true">▣</span>Purchases<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <span className="nav-unavailable" title="Expense workflows are not implemented"><span className="nav-icon" aria-hidden="true">◷</span>Expenses<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <a className={activeSection === "locations" ? "nav-active" : ""} aria-current={activeSection === "locations" ? "page" : undefined} href="#locations" onClick={() => setActiveSection("locations")}><span className="nav-icon" aria-hidden="true">⌂</span>Locations</a>
-            <span className="nav-unavailable" title="Financial reporting is not implemented"><span className="nav-icon" aria-hidden="true">▥</span>Reports<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <a className={activeSection === "ask" ? "nav-active" : ""} aria-current={activeSection === "ask" ? "page" : undefined} href="#ask" onClick={() => setActiveSection("ask")}><span className="nav-icon" aria-hidden="true">✦</span>Ask Vittavani</a>
-            <span className="nav-unavailable" title="Account settings are not implemented"><span className="nav-icon" aria-hidden="true">⚙</span>Settings<span className="sr-only">, not available yet</span><small>Later</small></span>
-            <a className={activeSection === "stock-movements" ? "nav-active" : ""} aria-current={activeSection === "stock-movements" ? "page" : undefined} href="#stock-movements" onClick={() => setActiveSection("stock-movements")}><span className="nav-icon" aria-hidden="true">↕</span>Stock movements</a>
+            {navigationItems.map((item) => "reason" in item ? (
+              <span className="nav-unavailable" title={item.reason} key={item.label}>
+                <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+                {item.label}
+                <span className="sr-only">, not available yet</span>
+                <small>Later</small>
+              </span>
+            ) : (
+              <a
+                className={activeSection === item.section ? "nav-active" : ""}
+                aria-current={activeSection === item.section ? "page" : undefined}
+                href={`#${item.section}`}
+                key={item.section}
+                onClick={() => setActiveSection(item.section)}
+              >
+                <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+                {item.label}
+              </a>
+            ))}
           </nav>
           <div className="sidebar-assistant">
             <div className="sidebar-assistant-icon">✦</div>
@@ -635,6 +661,7 @@ export default function Home() {
             {dashboardLoading ? "Refreshing…" : "↻ Refresh"}
           </button>
         </div>
+        <span className="stock-alert-anchor" id="stock-alerts" aria-hidden="true" />
 
         {dashboardLoading && (
           <div className="loading-grid" role="status" aria-label="Loading inventory dashboard">
@@ -711,7 +738,7 @@ export default function Home() {
               <p className="feature-boundary">Sales, customer udhar, payments, purchases, and expenses aren’t enabled yet—no sample figures are shown.</p>
             </section>
             <div className="dashboard-columns">
-              <section className="data-card" id="stock-alerts" aria-labelledby="low-stock-title">
+              <section className="data-card" aria-labelledby="low-stock-title">
                 <div className="card-heading">
                   <div>
                     <h2 id="low-stock-title">Stock alerts</h2>
