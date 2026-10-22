@@ -1484,7 +1484,7 @@ export default function Home() {
         )}
       </section>
 
-      <section className="ask-section" id="ask" data-page-section="ask" hidden={activeSection !== "ask"} aria-labelledby="welcome-title">
+      <section className="ask-section" id="ask" data-page-section="ask" hidden={activeSection !== "ask" && activeSection !== "dashboard"} aria-labelledby="welcome-title">
         <div className="assistant-heading">
           <span className="assistant-emblem" aria-hidden="true">✦</span>
           <p className="eyebrow">YOUR BUSINESS, IN YOUR WORDS</p>
