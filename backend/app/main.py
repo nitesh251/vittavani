@@ -31,6 +31,7 @@ from app.models import (
     Product,
     ProductAlias,
     Sale,
+    SaleLineItem,
     StockMovement,
 )
 from app.query_service import lookup_product

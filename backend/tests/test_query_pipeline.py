@@ -546,6 +546,7 @@ def test_customer_credit_sale_payment_and_ledger_use_signed_balance(client, sess
     )
     ledger = client.get(f"/api/v1/customers/{customer_id}/ledger", headers=headers)
     customers = client.get("/api/v1/customers", headers=headers)
+    sales = client.get("/api/v1/sales", headers=headers)
 
     assert payment.status_code == 200
     assert payment.json()["outstanding_balance"] == "20.00"
@@ -553,6 +554,10 @@ def test_customer_credit_sale_payment_and_ledger_use_signed_balance(client, sess
     assert [entry["amount_delta"] for entry in ledger.json()["items"]] == ["30.00", "-10.00"]
     assert ledger.json()["outstanding_balance"] == "20.00"
     assert customers.json()["items"][0]["outstanding_balance"] == "20.00"
+    assert sales.status_code == 200
+    assert sales.json()["items"][0]["product_name"] == "Amul Butter"
+    assert sales.json()["items"][0]["quantity"] == "2.000"
+    assert sales.json()["items"][0]["customer_name"] == "Ramesh"
     assert session.scalar(select(func.count(CustomerLedgerEntry.id))) == 2
     assert session.scalar(select(func.count(Sale.id))) == 1
 
