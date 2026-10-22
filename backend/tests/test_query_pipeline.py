@@ -12,14 +12,42 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.ai_service import AIProviderError, extract_product_query
+from app.command_service import CommandIntent, interpret_command
 from app.formatting import format_quantity, format_quantity_label
 from app.inventory_metrics import is_low_stock, is_out_of_stock
 from app.main import app
-from app.models import Business, InventoryBalance, Location, Product, ProductAlias, StockMovement
+from app.models import (
+    Business,
+    Customer,
+    CustomerLedgerEntry,
+    InventoryBalance,
+    Location,
+    Product,
+    ProductAlias,
+    Sale,
+    StockMovement,
+)
 from app.query_service import lookup_product
 
 BUSINESS_ID = UUID("00000000-0000-0000-0000-000000000001")
 OTHER_BUSINESS_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+
+@pytest.mark.parametrize(
+    ("query", "intent", "customer", "amount"),
+    [
+        ("Ramesh ne 200 rupaye de diye", CommandIntent.RECORD_CUSTOMER_PAYMENT, "ramesh", Decimal("200")),
+        ("रमेश ने २०० रुपये दे दिए", CommandIntent.RECORD_CUSTOMER_PAYMENT, "रमेश", Decimal("200")),
+        ("Ramesh ka kitna udhar pending hai", CommandIntent.CUSTOMER_BALANCE_QUERY, "ramesh", None),
+    ],
+)
+def test_voice_and_typed_customer_commands_are_parsed(query, intent, customer, amount):
+    command = interpret_command(query)
+
+    assert command is not None
+    assert command.intent == intent
+    assert command.customer_query == customer
+    assert command.amount == amount
 
 
 @pytest.fixture
@@ -417,6 +445,269 @@ def test_ai_mode_reports_unconfigured_provider_without_affecting_normal_search(c
     assert "Normal Search" in ai_response.json()["detail"]
     assert normal_response.status_code == 200
     assert normal_response.json()["quantity"] == "23.000"
+
+
+def test_voice_command_sale_commits_stock_and_is_idempotent(client, session):
+    headers = {"X-Dev-Token": "local-test-token", "Idempotency-Key": "sale-command-1"}
+    payload = {"query": "5 Amul Butter bik gaya at Shelf 2", "mode": "normal"}
+
+    response = client.post("/api/v1/ask", headers=headers, json=payload)
+    repeated = client.post("/api/v1/ask", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "record_sale"
+    assert response.json()["action_result"]["total_amount"] == "0.00"
+    assert repeated.json()["action_result"]["sale_id"] == response.json()["action_result"]["sale_id"]
+    assert session.scalar(select(func.sum(InventoryBalance.quantity)).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+    )) == Decimal("18.000")
+    assert session.scalar(select(func.count(Sale.id)).where(Sale.business_id == BUSINESS_ID)) == 1
+    assert session.scalar(select(func.count(StockMovement.id)).where(
+        StockMovement.business_id == BUSINESS_ID,
+        StockMovement.movement_type == "sale",
+    )) == 1
+
+
+def test_voice_receipt_adds_stock_and_records_movement(client, session):
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token", "Idempotency-Key": "receipt-command-1"},
+        json={"query": "Receive 5 packets of Amul Butter at Shelf 2"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "receive_stock"
+    assert session.scalar(select(InventoryBalance.quantity).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+        InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000012"),
+    )) == Decimal("25.000")
+    assert session.scalar(select(func.count(StockMovement.id)).where(
+        StockMovement.business_id == BUSINESS_ID,
+        StockMovement.movement_type == "purchase_receipt",
+    )) == 1
+
+
+def test_failed_voice_sale_does_not_change_inventory_or_history(client, session):
+    before_movements = session.scalar(select(func.count(StockMovement.id)))
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token", "Idempotency-Key": "insufficient-sale"},
+        json={"query": "500 Amul Butter bik gaya at Shelf 2"},
+    )
+
+    assert response.status_code == 409
+    assert session.scalar(select(func.sum(InventoryBalance.quantity)).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+    )) == Decimal("23.000")
+    assert session.scalar(select(func.count(Sale.id))) == 0
+    assert session.scalar(select(func.count(StockMovement.id))) == before_movements
+
+
+def test_customer_credit_sale_payment_and_ledger_use_signed_balance(client, session):
+    butter = session.get(Product, UUID("00000000-0000-0000-0000-000000000020"))
+    butter.selling_price = Decimal("15.00")
+    session.commit()
+    headers = {"X-Dev-Token": "local-test-token"}
+    customer_response = client.post(
+        "/api/v1/customers",
+        headers=headers,
+        json={"name": "Ramesh", "phone": "+91 98765 43210"},
+    )
+    assert customer_response.status_code == 201
+    customer_id = customer_response.json()["id"]
+    sale_payload = {
+        "product_id": str(butter.id),
+        "location_id": "00000000-0000-0000-0000-000000000012",
+        "quantity": "2",
+        "customer_id": customer_id,
+        "paid_amount": "0",
+        "unit": "packet",
+    }
+    missing_key_sale = client.post("/api/v1/sales", headers=headers, json=sale_payload)
+    sale_headers = {**headers, "Idempotency-Key": "credit-sale-ramesh-1"}
+    sale_response = client.post(
+        "/api/v1/sales",
+        headers=sale_headers,
+        json=sale_payload,
+    )
+    repeated_sale = client.post("/api/v1/sales", headers=sale_headers, json=sale_payload)
+
+    assert missing_key_sale.status_code == 400
+    assert sale_response.status_code == 201
+    assert repeated_sale.json()["sale_id"] == sale_response.json()["sale_id"]
+    assert sale_response.json()["outstanding_balance"] == "30.00"
+    payment = client.post(
+        f"/api/v1/customers/{customer_id}/payments",
+        headers={**headers, "Idempotency-Key": "ramesh-payment-in-ledger-test"},
+        json={"amount": "10"},
+    )
+    ledger = client.get(f"/api/v1/customers/{customer_id}/ledger", headers=headers)
+    customers = client.get("/api/v1/customers", headers=headers)
+
+    assert payment.status_code == 200
+    assert payment.json()["outstanding_balance"] == "20.00"
+    assert ledger.status_code == 200
+    assert [entry["amount_delta"] for entry in ledger.json()["items"]] == ["30.00", "-10.00"]
+    assert ledger.json()["outstanding_balance"] == "20.00"
+    assert customers.json()["items"][0]["outstanding_balance"] == "20.00"
+    assert session.scalar(select(func.count(CustomerLedgerEntry.id))) == 2
+    assert session.scalar(select(func.count(Sale.id))) == 1
+
+
+def test_overpayment_and_idempotency_key_reuse_fail_without_extra_posts(client, session):
+    headers = {"X-Dev-Token": "local-test-token"}
+    customer = Customer(business_id=BUSINESS_ID, name="Ramesh")
+    session.add(customer)
+    session.flush()
+    session.add(CustomerLedgerEntry(
+        business_id=BUSINESS_ID,
+        customer_id=customer.id,
+        transaction_type="opening_balance",
+        amount_delta=Decimal("25"),
+    ))
+    session.commit()
+    overpayment = client.post(
+        f"/api/v1/customers/{customer.id}/payments",
+        headers={**headers, "Idempotency-Key": "ramesh-overpayment-attempt"},
+        json={"amount": "30"},
+    )
+    missing_key_payment = client.post(
+        f"/api/v1/customers/{customer.id}/payments",
+        headers=headers,
+        json={"amount": "1"},
+    )
+    payment_headers = {**headers, "Idempotency-Key": "ramesh-payment-10"}
+    payment_body = {"amount": "10"}
+    payment_once = client.post(
+        f"/api/v1/customers/{customer.id}/payments",
+        headers=payment_headers,
+        json=payment_body,
+    )
+    payment_repeat = client.post(
+        f"/api/v1/customers/{customer.id}/payments",
+        headers=payment_headers,
+        json=payment_body,
+    )
+    first = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "key-reuse"},
+        json={"query": "Receive 1 packet of Amul Butter at Shelf 2"},
+    )
+    conflicting = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "key-reuse"},
+        json={"query": "Receive 2 packets of Amul Butter at Shelf 2"},
+    )
+
+    assert overpayment.status_code == 409
+    assert missing_key_payment.status_code == 400
+    assert payment_once.json()["outstanding_balance"] == "15.00"
+    assert payment_repeat.json()["outstanding_balance"] == "15.00"
+    assert first.status_code == 200
+    assert conflicting.status_code == 409
+    assert session.scalar(select(func.count(CustomerLedgerEntry.id))) == 2
+    assert session.scalar(select(func.sum(InventoryBalance.quantity)).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+    )) == Decimal("24.000")
+
+
+def test_voice_command_creates_product_only_with_unit_price_and_location(client, session):
+    headers = {"X-Dev-Token": "local-test-token", "Idempotency-Key": "new-ghee-command"}
+    clarification = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "New product Amul Ghee quantity 5 add kar do"},
+    )
+    assert clarification.status_code == 200
+    assert clarification.json()["clarification_required"]
+    assert "unit and selling price" in clarification.json()["message"]
+    assert session.scalar(select(func.count(Product.id)).where(
+        Product.business_id == BUSINESS_ID,
+        Product.name == "amul ghee",
+    )) == 0
+
+    complete = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "new-ghee-command-complete"},
+        json={
+            "query": "New product Amul Ghee quantity 5 unit packet price 350 at Storeroom add kar do"
+        },
+    )
+
+    assert complete.status_code == 200
+    assert complete.json()["intent"] == "create_product"
+    assert complete.json()["action_result"]["balance"] == "5"
+    created = session.scalar(select(Product).where(
+        Product.business_id == BUSINESS_ID,
+        Product.name == "amul ghee",
+    ))
+    assert created is not None
+    assert created.unit == "packet"
+    assert created.selling_price == Decimal("350.00")
+    assert session.scalar(select(func.count(StockMovement.id)).where(
+        StockMovement.business_id == BUSINESS_ID,
+        StockMovement.product_id == created.id,
+    )) == 1
+
+
+def test_voice_price_update_and_customer_payment_persist(client, session):
+    headers = {"X-Dev-Token": "local-test-token"}
+    butter_id = UUID("00000000-0000-0000-0000-000000000020")
+    price_response = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "price-update-butter"},
+        json={"query": "Amul Butter ka price 350 kar do"},
+    )
+    assert price_response.status_code == 200
+    assert price_response.json()["action_result"]["selling_price"] == "350"
+    assert client.get("/api/v1/products", headers=headers).json()["items"][0]["selling_price"] == "350.00"
+
+    customer = client.post("/api/v1/customers", headers=headers, json={"name": "Ramesh"}).json()
+    session.add(
+        CustomerLedgerEntry(
+            business_id=BUSINESS_ID,
+            customer_id=UUID(customer["id"]),
+            transaction_type="opening_balance",
+            amount_delta=Decimal("500"),
+        )
+    )
+    session.commit()
+    paid = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "voice-payment-200"},
+        json={"query": "Ramesh ne 200 rupaye de diye"},
+    )
+    balance = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "Ramesh ka kitna udhar pending hai"},
+    )
+
+    assert paid.status_code == 200
+    assert "Outstanding balance ₹300.00" in paid.json()["message"]
+    assert balance.status_code == 200
+    assert balance.json()["action_result"]["outstanding_balance"] == "300.00"
+    assert session.scalar(select(func.count(CustomerLedgerEntry.id))) == 2
+
+
+def test_destructive_voice_command_never_changes_data_without_implemented_confirmation(client, session):
+    before_products = session.scalar(select(func.count(Product.id)))
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token", "Idempotency-Key": "delete-request"},
+        json={"query": "delete Amul Butter", "confirmation": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["clarification_required"]
+    assert "not enabled" in response.json()["message"]
+    assert session.scalar(select(func.count(Product.id))) == before_products
+
+
 
 
 def test_ai_provider_rejects_non_object_json_responses(monkeypatch):

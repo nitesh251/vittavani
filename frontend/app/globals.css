@@ -17,6 +17,27 @@
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, textarea, select, input { font: inherit; }
 button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #9bc7ad; outline-offset: 3px; }
+.customer-layout { display: grid; grid-template-columns: minmax(220px, .72fr) minmax(0, 1.5fr); align-items: start; gap: 14px; }
+.customer-detail-column { display: grid; gap: 14px; min-width: 0; }
+.customer-list-card { min-width: 0; }
+.customer-search { display: grid; gap: 6px; margin: 0 0 10px; color: #385448; font-size: 12px; font-weight: 600; }
+.customer-search input, .customer-inline-form input, .customer-inline-form select { width: 100%; min-width: 0; min-height: 40px; border: 1px solid #d7e2db; border-radius: 8px; padding: 8px 10px; background: white; color: var(--ink); font-size: 13px; }
+.customer-new-button { width: 100%; margin-bottom: 8px; }
+.customer-list li { display: block; padding: 0; }
+.customer-select { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; border: 0; border-radius: 8px; padding: 9px 7px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.customer-select:hover, .customer-select.customer-selected { background: #eff8f2; }
+.customer-select > span:first-child { min-width: 0; }
+.customer-balance { flex-shrink: 0; color: var(--green-dark); font-size: 12px; font-weight: 750; }
+.customer-outstanding { display: flex; justify-content: space-between; align-items: center; margin: 0 0 12px; border-radius: 10px; padding: 12px; background: #f0f8f3; color: #52675c; font-size: 13px; }
+.customer-outstanding strong { color: var(--green-dark); font-size: 17px; }
+.customer-inline-form { display: grid; gap: 10px; margin-top: 14px; border-top: 1px solid var(--line); padding-top: 13px; }
+.customer-inline-form > strong { font-size: 13px; }
+.customer-inline-form label { display: grid; gap: 5px; color: #385448; font-size: 12px; font-weight: 600; }
+.customer-ledger li { gap: 10px; }
+.ledger-debit, .ledger-payment { flex-shrink: 0; font-size: 12px; font-weight: 750; }
+.ledger-debit { color: #a34f3b; }
+.ledger-payment { color: var(--green-dark); }
+.sales-history-card { margin-top: 14px; }
 .page { min-height: 100vh; display: flex; flex-direction: column; }
 .topbar { position: sticky; top: 0; z-index: 2; width: 100%; padding: 0 30px; height: 76px; display: flex; align-items: center; justify-content: flex-start; gap: 30px; background: #fff; border-bottom: 1px solid #e9eeeb; }
 .brand { min-width: 214px; color: var(--ink); display: inline-flex; align-items: center; gap: 11px; text-decoration: none; font-weight: 700; font-size: 20px; letter-spacing: -.03em; flex-shrink: 0; }
@@ -242,6 +263,7 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
 .sidebar-footer small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .workspace { display: grid; flex: 1; min-width: 0; grid-template-columns: minmax(0, 1.55fr) minmax(315px, .82fr); grid-template-areas: "dashboard assistant" "inventory assistant" "locations locations" "movements movements"; align-content: start; align-items: start; column-gap: 24px; padding: 0 clamp(20px, 3vw, 42px) 30px; }
 .inventory-section.auxiliary-section { grid-area: locations; padding: 22px 0 13px; }
+.customer-section { grid-area: customers; min-width: 0; }
 #stock-movements { grid-area: movements; padding-bottom: 32px; }
 .section-heading .eyebrow { margin-bottom: 8px; }
 .heading-dot { color: var(--green); }
@@ -396,6 +418,7 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
   grid-template-areas:
     "dashboard assistant"
     "inventory assistant"
+    "customers assistant"
     "locations assistant"
     "movements assistant";
   row-gap: 0;
@@ -466,10 +489,11 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
   .sidebar-collapsed .sidebar-control-row { justify-content: space-between; }
   .workspace {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "dashboard" "inventory" "locations" "movements" "assistant";
+    grid-template-areas: "dashboard" "inventory" "customers" "locations" "movements" "assistant";
     row-gap: 0;
     overflow-x: visible;
   }
+  .customer-layout { grid-template-columns: minmax(0, 1fr); }
   .ask-section { position: static; }
   .mobile-sidebar-backdrop {
     position: fixed;

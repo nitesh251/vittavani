@@ -21,6 +21,8 @@ class CommandIntent(StrEnum):
     RECORD_CUSTOMER_PAYMENT = "record_customer_payment"
     CUSTOMER_BALANCE_QUERY = "customer_balance_query"
     CUSTOMER_LEDGER_QUERY = "customer_ledger_query"
+    CORRECT_TRANSACTION = "correct_transaction"
+    DELETE_OR_REVERSE_RECORD = "delete_or_reverse_record"
     CLARIFY = "clarify"
 
 
@@ -37,6 +39,7 @@ class BusinessCommand(BaseModel):
     location_query: str | None = Field(default=None, max_length=120)
     source_location_query: str | None = Field(default=None, max_length=120)
     destination_location_query: str | None = Field(default=None, max_length=120)
+    confirmation_requested: bool = False
 
 
 _NUMERAL_TRANSLATION = str.maketrans("०१२३४५६७८९", "0123456789")
@@ -45,12 +48,25 @@ _AMOUNT = re.compile(
     r"(?<!\w)(\d+(?:\.\d{1,2})?)\s*(?:₹|rs\.?|rupees?|rupaye|rupay|रुप(?:ये|ए)?)(?!\w)",
     re.I,
 )
+_PRICE = re.compile(r"\b(?:selling price|price|daam)\s*(?:is|of)?\s*(\d+(?:\.\d{1,2})?)", re.I)
 _UNIT_WORDS = {
     "packet", "packets", "pkt", "pkts", "piece", "pieces", "pcs",
     "unit", "units", "bottle", "bottles", "kg", "kgs", "kilogram", "kilograms",
     "gram", "grams", "g", "litre", "litres", "liter", "liters", "लिटर", "किलो",
     "पैकेट", "पैकेट्स", "पीस",
 }
+
+
+def _find_unit(text: str) -> str | None:
+    explicit = re.search(r"\bunit\s+([a-z]+)\b", text)
+    if explicit and explicit.group(1) in _UNIT_WORDS:
+        return explicit.group(1)
+    matches = [
+        (match.start(), -len(unit), unit)
+        for unit in _UNIT_WORDS
+        if (match := re.search(rf"(?<!\w){re.escape(unit)}(?!\w)", text))
+    ]
+    return min(matches)[2] if matches else None
 
 
 def _number(text: str, pattern: re.Pattern[str]) -> tuple[Decimal | None, str]:
@@ -62,9 +78,22 @@ def _number(text: str, pattern: re.Pattern[str]) -> tuple[Decimal | None, str]:
 
 def _clean_entity(text: str) -> str | None:
     value = normalize_text(text.translate(_NUMERAL_TRANSLATION))
-    value = re.sub(r"\b(?:packet|packets|pkt|pkts|piece|pieces|pcs|unit|units|bottle|bottles|kg|kgs|kilogram|kilograms|gram|grams|g|litre|litres|liter|liters|of|ke|ka|ki|ko|ne|का|के|की|को|ने|से|में)\b", " ", value)
+    value = re.sub(
+        r"(?<!\w)(?:packet|packets|pkt|pkts|piece|pieces|pcs|unit|units|bottle|bottles|kg|kgs|kilogram|kilograms|gram|grams|g|litre|litres|liter|liters|of|ke|ka|ki|ko|ne|de diye|de diya|diya|"
+        r"udhar diya|का|के|की|को|ने|से|में|दे दिए|दे दिया|दिए|दिया|उधार दिया)(?!\w)",
+        " ",
+        value,
+    )
     value = re.sub(r"\s+", " ", value).strip(" .,!?-")
     return value or None
+
+
+def _extract_location(text: str) -> tuple[str, str | None]:
+    match = re.search(r"\b(?:at|in|location)\s+(.+?)\s*$", text)
+    if match:
+        location = re.sub(r"\s+(?:add kar do|kardo|kar do|add stock|stock add|receive)$", "", match.group(1))
+        return text[:match.start()], _clean_entity(location)
+    return text, None
 
 
 def interpret_command(text: str) -> BusinessCommand | None:
@@ -72,18 +101,22 @@ def interpret_command(text: str) -> BusinessCommand | None:
     normalized = normalize_text(text.translate(_NUMERAL_TRANSLATION))
     if not normalized:
         return None
+    if any(phrase in normalized for phrase in ("delete", "remove", "undo", "reverse", "cancel", "हटा दो", "मिटा दो")):
+        return BusinessCommand(intent=CommandIntent.DELETE_OR_REVERSE_RECORD)
+    if any(phrase in normalized for phrase in ("correct transaction", "wrong entry", "galat entry", "सुधार")):
+        return BusinessCommand(intent=CommandIntent.CORRECT_TRANSACTION)
 
     if any(word in normalized for word in ("pending", "balance", "kitna udhar", "कितना उधार")):
-        customer = re.split(r"\b(?:ka|ki|ke|का|की|के)\b", normalized, maxsplit=1)[0]
+        customer = re.split(r"(?<!\w)(?:ka|ki|ke|का|की|के)(?!\w)", normalized, maxsplit=1)[0]
         customer = _clean_entity(re.sub(r"\b(?:kitna udhar pending|kitna udhar|pending|balance)\b", " ", customer))
         return BusinessCommand(intent=CommandIntent.CUSTOMER_BALANCE_QUERY, customer_query=customer)
     if any(word in normalized for word in ("ledger", "transaction history", "hisab", "खाता")):
-        customer = _clean_entity(re.sub(r"\b(?:show|view|dikhao|का|की|के|ledger|hisab|खाता)\b", " ", normalized))
+        customer = _clean_entity(re.sub(r"(?<!\w)(?:show|view|dikhao|का|की|के|ledger|hisab|खाता)(?!\w)", " ", normalized))
         return BusinessCommand(intent=CommandIntent.CUSTOMER_LEDGER_QUERY, customer_query=customer)
 
-    if any(phrase in normalized for phrase in ("ne de diye", "paid", "payment received", "jama kar", "दे दिए", "भुगतान")):
+    if any(phrase in normalized for phrase in ("de diye", "paid", "payment received", "jama kar", "दे दिए", "भुगतान")):
         amount, residue = _number(normalized, _AMOUNT)
-        customer = _clean_entity(re.sub(r"\b(?:ne|de diye|paid|payment received|jama kar|customer)\b", " ", residue))
+        customer = _clean_entity(re.sub(r"(?<!\w)(?:ne|de diye|paid|payment received|jama kar|customer|ने|दे दिए|दे दिया|भुगतान)(?!\w)", " ", residue))
         return BusinessCommand(
             intent=CommandIntent.RECORD_CUSTOMER_PAYMENT,
             customer_query=customer,
@@ -92,7 +125,7 @@ def interpret_command(text: str) -> BusinessCommand | None:
 
     if any(phrase in normalized for phrase in ("udhar diya", "credit sale", "on credit", "उधार दिया")):
         amount, residue = _number(normalized, _AMOUNT)
-        customer = _clean_entity(re.sub(r"\b(?:ko|ka|udhar diya|credit sale|on credit)\b", " ", residue))
+        customer = _clean_entity(re.sub(r"(?<!\w)(?:ko|ka|udhar diya|credit sale|on credit|को|का|उधार दिया)(?!\w)", " ", residue))
         return BusinessCommand(
             intent=CommandIntent.RECORD_CREDIT_SALE,
             customer_query=customer,
@@ -121,36 +154,54 @@ def interpret_command(text: str) -> BusinessCommand | None:
             )
         return BusinessCommand(intent=CommandIntent.TRANSFER_STOCK, quantity=quantity)
 
+    if any(phrase in normalized for phrase in ("new product", "create product", "naya product", "नया उत्पाद")):
+        text_without_prefix = re.sub(r"^(?:new product|create product|naya product|नया उत्पाद)\s*", "", normalized)
+        quantity, residue = _number(text_without_prefix, _QUANTITY)
+        sale_price, residue = _number(residue, _PRICE)
+        residue, location = _extract_location(residue)
+        product = _clean_entity(re.sub(r"\b(?:quantity|qty|unit|selling|price|daam|add|kar do|kardo)\b", " ", residue))
+        unit_match = _find_unit(normalized)
+        return BusinessCommand(
+            intent=CommandIntent.CREATE_PRODUCT,
+            product_query=product,
+            quantity=quantity,
+            unit=unit_match,
+            sale_price=sale_price,
+            location_query=location,
+        )
+
     if "price" in normalized or "daam" in normalized or "कीमत" in normalized:
         amount, residue = _number(normalized, _QUANTITY)
-        product = _clean_entity(re.sub(r"\b(?:ka|ki|ke|price|daam|kar do|kardo|set|to)\b", " ", residue))
+        product = _clean_entity(re.sub(r"(?<!\w)(?:ka|ki|ke|price|daam|kar do|kardo|set|to|कीमत)(?!\w)", " ", residue))
         return BusinessCommand(
             intent=CommandIntent.UPDATE_PRODUCT,
             product_query=product,
             sale_price=amount,
         )
 
-    if any(phrase in normalized for phrase in ("new product", "create product", "naya product", "नया उत्पाद")):
-        text_without_prefix = re.sub(r"^(?:new product|create product|naya product|नया उत्पाद)\s*", "", normalized)
-        quantity, residue = _number(text_without_prefix, _QUANTITY)
-        product = _clean_entity(re.sub(r"\b(?:quantity|qty|add|kar do|kardo)\b", " ", residue))
-        unit_match = next((word for word in _UNIT_WORDS if re.search(rf"\b{re.escape(word)}\b", normalized)), None)
-        return BusinessCommand(
-            intent=CommandIntent.CREATE_PRODUCT,
-            product_query=product,
-            quantity=quantity,
-            unit=unit_match,
-        )
-
     if any(phrase in normalized for phrase in ("sell", "sold", "bik gaya", "bik gaye", "bech do", "बेच", "बिक गया")):
         quantity, residue = _number(normalized, _QUANTITY)
+        residue, location = _extract_location(residue)
         product = _clean_entity(re.sub(r"\b(?:sell|sold|bik gaya|bik gaye|bech do|kar do|kardo)\b", " ", residue))
-        unit = next((word for word in _UNIT_WORDS if re.search(rf"\b{re.escape(word)}\b", normalized)), None)
-        return BusinessCommand(intent=CommandIntent.RECORD_SALE, product_query=product, quantity=quantity, unit=unit)
+        unit = _find_unit(normalized)
+        return BusinessCommand(
+            intent=CommandIntent.RECORD_SALE,
+            product_query=product,
+            quantity=quantity,
+            unit=unit,
+            location_query=location,
+        )
 
     if any(phrase in normalized for phrase in ("receive", "add kar do", "add stock", "stock add", "जोड़", "जोड")):
         quantity, residue = _number(normalized, _QUANTITY)
+        residue, location = _extract_location(residue)
         product = _clean_entity(re.sub(r"\b(?:receive|add|add stock|stock|kar do|kardo)\b", " ", residue))
-        unit = next((word for word in _UNIT_WORDS if re.search(rf"\b{re.escape(word)}\b", normalized)), None)
-        return BusinessCommand(intent=CommandIntent.RECEIVE_STOCK, product_query=product, quantity=quantity, unit=unit)
+        unit = _find_unit(normalized)
+        return BusinessCommand(
+            intent=CommandIntent.RECEIVE_STOCK,
+            product_query=product,
+            quantity=quantity,
+            unit=unit,
+            location_query=location,
+        )
     return None

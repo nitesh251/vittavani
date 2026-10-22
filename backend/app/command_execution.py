@@ -18,6 +18,29 @@ from app.models import Customer, CustomerLedgerEntry, InventoryBalance, Location
 from app.query_service import lookup_product
 from app.query_understanding import Candidate, Intent, resolve_product
 
+_UNIT_CANONICAL = {
+    "packets": "packet",
+    "pkt": "packet",
+    "pkts": "packet",
+    "pieces": "piece",
+    "pcs": "piece",
+    "units": "unit",
+    "bottles": "bottle",
+    "kgs": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "gram": "g",
+    "grams": "g",
+    "liters": "litre",
+    "litres": "litre",
+    "liter": "litre",
+}
+
+
+def _unit_key(unit: str) -> str:
+    normalized = unit.strip().casefold()
+    return _UNIT_CANONICAL.get(normalized, normalized)
+
 
 def _clarification(message: str, *, candidates: list[str] | None = None) -> dict[str, object]:
     return {
@@ -83,10 +106,14 @@ def _resolve_customer(
     if not query:
         return None, []
     term = query.strip().casefold()
+    digits = "".join(character for character in query if character.isdigit())
     customers = session.scalars(
         select(Customer).where(Customer.business_id == business_id, Customer.active.is_(True))
     ).all()
-    matches = [customer for customer in customers if customer.name.casefold() == term or customer.phone == term]
+    matches = [
+        customer for customer in customers
+        if customer.name.casefold() == term or (digits and customer.phone == digits)
+    ]
     if len(matches) > 1:
         return None, [f"{customer.name} ({customer.phone or 'no phone'})" for customer in matches]
     return (matches[0], []) if matches else (None, [])
@@ -155,6 +182,14 @@ def execute_command(
 ) -> dict[str, object] | None:
     if command.intent == CommandIntent.CLARIFY:
         return _clarification("I need more details before I can safely make that change.")
+    if command.intent == CommandIntent.DELETE_OR_REVERSE_RECORD:
+        return _clarification(
+            "Deleting customers/products and reversing posted transactions are not enabled yet; no records were changed."
+        )
+    if command.intent == CommandIntent.CORRECT_TRANSACTION:
+        return _clarification(
+            "Transaction corrections are not enabled yet; no records were changed."
+        )
     if command.intent in {
         CommandIntent.STOCK_QUERY,
         CommandIntent.LOCATION_QUERY,
@@ -299,7 +334,7 @@ def execute_command(
         product = Product(
             business_id=business_id,
             name=name,
-            unit=command.unit,
+            unit=_unit_key(command.unit),
             selling_price=command.sale_price,
         )
         session.add(product)
@@ -328,7 +363,7 @@ def execute_command(
             return _clarification("Tell me the product name.")
         if command.quantity is None:
             return _clarification(f"Tell me how many {product.unit} of {product.name}.")
-        if command.unit and command.unit.casefold() != product.unit.casefold():
+        if command.unit and _unit_key(command.unit) != _unit_key(product.unit):
             return _clarification(f"{product.name} is measured in {product.unit}; tell me the quantity in that unit.")
 
         if command.intent == CommandIntent.TRANSFER_STOCK:

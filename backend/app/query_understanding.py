@@ -90,7 +90,7 @@ _ALL_PHRASES = tuple(
 def normalize_text(text: str) -> str:
     value = unicodedata.normalize("NFKC", text).casefold()
     value = "".join(
-        char if char.isalnum() or char.isspace() else " "
+        char if char.isalnum() or char.isspace() or unicodedata.category(char).startswith("M") else " "
         for char in value
     )
     return re.sub(r"\s+", " ", value).strip()

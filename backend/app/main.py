@@ -42,7 +42,7 @@ app.add_middleware(
     allow_origins=[settings.frontend_origin],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT"],
-    allow_headers=["Content-Type", "X-Dev-Token"],
+    allow_headers=["Content-Type", "X-Dev-Token", "Idempotency-Key"],
 )
 
 
@@ -386,14 +386,29 @@ def ask(
             CommandIntent.UPDATE_PRODUCT,
             CommandIntent.TRANSFER_STOCK,
         }
-        needs_ai_details = command.intent in {
-            CommandIntent.CLARIFY,
-            CommandIntent.TRANSFER_STOCK,
-            CommandIntent.RECORD_CREDIT_SALE,
-        } and (
+        needs_ai_details = (
             command.intent == CommandIntent.CLARIFY
-            or not command.product_query
-            or command.quantity is None
+            or command.intent in {
+                CommandIntent.TRANSFER_STOCK,
+                CommandIntent.RECORD_CREDIT_SALE,
+                CommandIntent.RECORD_SALE,
+                CommandIntent.RECEIVE_STOCK,
+            } and (not command.product_query or command.quantity is None)
+            or command.intent == CommandIntent.CREATE_PRODUCT and (
+                not command.product_query or command.quantity is None
+                or command.unit is None or command.sale_price is None
+            )
+            or command.intent == CommandIntent.UPDATE_PRODUCT and (
+                not command.product_query or command.sale_price is None
+            )
+            or command.intent == CommandIntent.RECORD_CUSTOMER_PAYMENT and (
+                not command.customer_query or command.amount is None
+            )
+            or command.intent in {
+                CommandIntent.CUSTOMER_BALANCE_QUERY,
+                CommandIntent.CUSTOMER_LEDGER_QUERY,
+            } and not command.customer_query
+            or command.intent == CommandIntent.CREATE_CUSTOMER and not command.customer_query
         )
         if needs_ai_details and body.mode == "ai":
             if not ai_is_configured():
@@ -690,9 +705,35 @@ def customer_ledger(
 def receive_customer_payment(
     customer_id: UUID,
     body: CustomerPaymentRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> dict[str, str]:
+    if idempotency_key is None:
+        raise HTTPException(status_code=400, detail="An Idempotency-Key header is required to record a payment")
+    if not idempotency_key.strip() or len(idempotency_key) > 120:
+        raise HTTPException(status_code=422, detail="Idempotency-Key must contain 1 to 120 characters")
+    payload_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "customer_id": str(customer_id),
+                "amount": str(body.amount),
+                "note": body.note,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    if idempotency_key:
+        saved = session.scalar(
+            select(CommandRequest).where(
+                CommandRequest.business_id == business_id,
+                CommandRequest.idempotency_key == idempotency_key,
+            )
+        )
+        if saved:
+            if saved.payload_hash != payload_hash:
+                raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+            return saved.response_body
     try:
         with _transaction(session):
             customer = session.scalar(
@@ -708,7 +749,26 @@ def receive_customer_payment(
                 raise HTTPException(status_code=404, detail="Customer not found")
             balance = post_customer_payment(session, business_id, customer, body.amount, note=body.note)
             response = {"customer_id": str(customer.id), "outstanding_balance": str(balance)}
+            if idempotency_key:
+                session.add(
+                    CommandRequest(
+                        business_id=business_id,
+                        idempotency_key=idempotency_key,
+                        payload_hash=payload_hash,
+                        response_body=response,
+                    )
+                )
+                session.flush()
     except IntegrityError as exc:
+        session.rollback()
+        saved = session.scalar(
+            select(CommandRequest).where(
+                CommandRequest.business_id == business_id,
+                CommandRequest.idempotency_key == idempotency_key,
+            )
+        ) if idempotency_key else None
+        if saved and saved.payload_hash == payload_hash:
+            return saved.response_body
         raise HTTPException(status_code=409, detail="Could not record payment; retry the request") from exc
     return response
 
@@ -720,6 +780,27 @@ def create_sale(
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> dict[str, str]:
+    if idempotency_key is None:
+        raise HTTPException(status_code=400, detail="An Idempotency-Key header is required to record a sale")
+    if not idempotency_key.strip() or len(idempotency_key) > 120:
+        raise HTTPException(status_code=422, detail="Idempotency-Key must contain 1 to 120 characters")
+    payload_hash = hashlib.sha256(
+        json.dumps(
+            {"operation": "sale", "body": body.model_dump(mode="json")},
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    if idempotency_key:
+        saved = session.scalar(
+            select(CommandRequest).where(
+                CommandRequest.business_id == business_id,
+                CommandRequest.idempotency_key == idempotency_key,
+            )
+        )
+        if saved:
+            if saved.payload_hash != payload_hash:
+                raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+            return saved.response_body
     try:
         with _transaction(session):
             product = _require_active_product(session, business_id, body.product_id)
@@ -749,7 +830,7 @@ def create_sale(
                 note=body.note,
             )
             if idempotency_key:
-                sale.idempotency_key = idempotency_key[:120]
+                sale.idempotency_key = idempotency_key
             session.flush()
             response = {
                 "sale_id": str(sale.id),
@@ -758,9 +839,69 @@ def create_sale(
                 "outstanding_balance": str(customer_balance(session, business_id, customer.id)) if customer else "0",
                 "message": f"Sale recorded for {product.name}. Total ₹{sale.total_amount}.",
             }
+            if idempotency_key:
+                session.add(
+                    CommandRequest(
+                        business_id=business_id,
+                        idempotency_key=idempotency_key,
+                        payload_hash=payload_hash,
+                        response_body=response,
+                    )
+                )
+                session.flush()
     except IntegrityError as exc:
+        session.rollback()
+        saved = session.scalar(
+            select(CommandRequest).where(
+                CommandRequest.business_id == business_id,
+                CommandRequest.idempotency_key == idempotency_key,
+            )
+        ) if idempotency_key else None
+        if saved and saved.payload_hash == payload_hash:
+            return saved.response_body
         raise HTTPException(status_code=409, detail="Duplicate sale or inventory conflict; refresh and retry") from exc
     return response
+
+
+@app.get("/api/v1/sales")
+def list_sales(
+    limit: int = Query(default=100, ge=1, le=200),
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, list[dict[str, str | None]]]:
+    rows = session.execute(
+        select(Sale, SaleLineItem, Product.name, Product.unit, Customer.name)
+        .join(
+            SaleLineItem,
+            (SaleLineItem.business_id == Sale.business_id) & (SaleLineItem.sale_id == Sale.id),
+        )
+        .join(
+            Product,
+            (Product.business_id == SaleLineItem.business_id) & (Product.id == SaleLineItem.product_id),
+        )
+        .outerjoin(
+            Customer,
+            (Customer.business_id == Sale.business_id) & (Customer.id == Sale.customer_id),
+        )
+        .where(Sale.business_id == business_id)
+        .order_by(Sale.created_at.desc(), Sale.id.desc())
+        .limit(limit)
+    ).all()
+    return {
+        "items": [
+            {
+                "id": str(sale.id),
+                "product_name": product_name,
+                "quantity": str(line.quantity),
+                "unit": unit,
+                "total_amount": str(line.line_total),
+                "paid_amount": str(sale.paid_amount),
+                "customer_name": customer_name,
+                "created_at": sale.created_at.isoformat(),
+            }
+            for sale, line, product_name, unit, customer_name in rows
+        ]
+    }
 
 
 @app.get("/api/v1/dashboard", response_model=DashboardResponse)

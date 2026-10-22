@@ -4,6 +4,8 @@ const endpointMethods = {
   "ai/status": ["GET"],
   products: ["GET", "POST"],
   locations: ["GET", "POST"],
+  customers: ["GET", "POST"],
+  sales: ["GET", "POST"],
   "stock-movements": ["GET"],
   "inventory/receipts": ["POST"],
   "inventory/adjustments": ["POST"],
@@ -55,11 +57,16 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
   }
 
   const endpoint = path.join("/");
-  const methods = Object.prototype.hasOwnProperty.call(endpointMethods, endpoint)
+  let methods = Object.prototype.hasOwnProperty.call(endpointMethods, endpoint)
     ? endpointMethods[endpoint]
-    : /^products\/[0-9a-f-]{36}$/i.test(endpoint)
-      ? ["PUT"]
-      : undefined;
+    : undefined;
+  if (!methods && /^products\/[0-9a-f-]{36}$/i.test(endpoint)) {
+    methods = ["PUT"];
+  } else if (!methods && /^customers\/[0-9a-f-]{36}$/i.test(endpoint)) {
+    methods = ["PUT"];
+  } else if (!methods && /^customers\/[0-9a-f-]{36}\/(?:ledger|payments)$/i.test(endpoint)) {
+    methods = endpoint.endsWith("/ledger") ? ["GET"] : ["POST"];
+  }
   if (!methods) {
     return Response.json({ detail: "API route not found" }, { status: 404 });
   }
@@ -98,6 +105,8 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
   const headers = new Headers({ accept: "application/json", "X-Dev-Token": devToken });
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
 
   try {
     const queryParams = new URLSearchParams();

@@ -55,6 +55,14 @@ The dashboard includes product creation/editing, storage-location creation, and 
 
 The corresponding development-token-protected endpoints include `GET /api/v1/products`, `GET /api/v1/locations`, `GET /api/v1/stock-movements`, `GET /api/v1/ai/status`, `PUT /api/v1/products/{product_id}`, `POST /api/v1/inventory/receipts`, `POST /api/v1/inventory/adjustments`, and `POST /api/v1/inventory/transfers`. No schema migration is required for these operations. See [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) for test coverage and the limitation on live PostgreSQL verification.
 
+### Customers, sales, and voice commands
+
+Run `alembic upgrade head` from `backend/` after updating. The additive `0002_customer_ledger` migration adds tenant-scoped customers, sale lines, an append-only customer ledger, and command idempotency records. Customer balances are derived by summing signed ledger deltas: positive values increase the amount owed; negative values are payments. Sales, stock movements, inventory balances, and credit-sale ledger entries are committed together. Payment entries do not mutate inventory.
+
+The Customers & Udhar page provides customer search/create/edit, customer balances and ledger history, a credit-sale form, payment collection, and persisted sales history. `GET/POST /api/v1/customers`, `PUT /api/v1/customers/{id}`, `GET /api/v1/customers/{id}/ledger`, `POST /api/v1/customers/{id}/payments`, and `GET/POST /api/v1/sales` are protected by the existing development-token dependency. Mutating command and payment requests use `Idempotency-Key`; reusing a key with a different payload is rejected.
+
+Ask Vittavani supports a bounded set of deterministic English/Hinglish stock, sale, receipt, product-price, customer-payment, and customer-balance commands. In AI mode, incomplete/ambiguous mutations may be interpreted into a strict Pydantic command schema; backend services still validate tenant ownership, product units, quantities, locations, stock, and customer balances. Missing data prompts for clarification rather than making up values. Product/customer deletion, posted-transaction reversals, and ledger corrections are intentionally not enabled; those requests do not mutate records. Hindi speech transcripts use the same text command path, but comprehensive Hindi grammar and real speech-engine accuracy are not guaranteed.
+
 The demo seed is optional and does not run on app startup. To reset local development data, stop the database and remove its volume with `docker compose down -v`; this deletes local database contents.
 
 ## Environment

@@ -7,6 +7,8 @@ type Answer = {
   original_query: string;
   clarification_required: boolean;
   candidates: string[];
+  intent?: string;
+  action_result?: Record<string, unknown> | null;
 };
 
 type Dashboard = {
@@ -62,6 +64,35 @@ type InventoryProduct = {
 };
 
 type InventoryLocation = { id: string; name: string; full_name: string; parent_location_id: string | null };
+type Customer = {
+  id: string;
+  name: string;
+  phone: string | null;
+  address: string | null;
+  notes: string | null;
+  active: boolean;
+  outstanding_balance: string;
+  created_at: string;
+};
+type CustomerLedgerItem = {
+  id: string;
+  transaction_type: string;
+  amount_delta: string;
+  outstanding_balance: string;
+  sale_id: string | null;
+  note: string | null;
+  created_at: string;
+};
+type SaleHistoryItem = {
+  id: string;
+  product_name: string;
+  quantity: string;
+  unit: string;
+  total_amount: string;
+  paid_amount: string;
+  customer_name: string | null;
+  created_at: string;
+};
 
 type SpeechRecognitionAlternative = { transcript: string };
 type SpeechRecognitionResult = ArrayLike<SpeechRecognitionAlternative> & { isFinal: boolean };
@@ -98,9 +129,9 @@ const stockStatusLabels = {
 };
 const navigationItems = [
   { section: "dashboard", label: "Dashboard", icon: "▦" },
-  { label: "Sales", icon: "↗", reason: "Sales requires a backend module before it can be enabled." },
+  { section: "sales", label: "Sales", icon: "↗" },
   { section: "inventory", label: "Inventory", icon: "▤" },
-  { label: "Customers & Udhar", icon: "♙", reason: "Customer udhar requires a backend ledger before it can be enabled." },
+  { section: "customers", label: "Customers & Udhar", icon: "♙" },
   { label: "Payments & Collections", icon: "↔", reason: "Payment workflows are not implemented." },
   { label: "Purchases", icon: "▣", reason: "Purchasing workflows are not implemented." },
   { label: "Expenses", icon: "◷", reason: "Expense workflows are not implemented." },
@@ -199,6 +230,18 @@ export default function Home() {
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [locations, setLocations] = useState<InventoryLocation[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customerLedger, setCustomerLedger] = useState<CustomerLedgerItem[]>([]);
+  const [salesHistory, setSalesHistory] = useState<SaleHistoryItem[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [customerLoading, setCustomerLoading] = useState(true);
+  const [customerError, setCustomerError] = useState("");
+  const [customerNotice, setCustomerNotice] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerEditingId, setCustomerEditingId] = useState("");
+  const [customerForm, setCustomerForm] = useState({ name: "", phone: "", address: "", notes: "" });
+  const [customerPayment, setCustomerPayment] = useState("");
+  const [customerSale, setCustomerSale] = useState({ product_id: "", location_id: "", quantity: "", paid_amount: "0" });
   const [aiConfigured, setAiConfigured] = useState(false);
   const [aiStatusError, setAiStatusError] = useState("");
   const [aiProvider, setAiProvider] = useState("");
@@ -230,6 +273,9 @@ export default function Home() {
   const [speaking, setSpeaking] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const askInputRef = useRef<HTMLTextAreaElement>(null);
+  const commandRequestKeyRef = useRef<{ query: string; key: string } | null>(null);
+  const customerSaleKeyRef = useRef<string | null>(null);
+  const customerPaymentKeyRef = useRef<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setDashboardLoading(true);
@@ -281,6 +327,48 @@ export default function Home() {
     }
   }, []);
 
+  const loadCustomers = useCallback(async () => {
+    setCustomerLoading(true);
+    setCustomerError("");
+    try {
+      const response = await fetch("/api/v1/customers", { headers });
+      if (!response.ok) throw new Error(await apiError(response, "Could not load customers."));
+      const data = (await response.json()) as { items: Customer[] };
+      setCustomers(data.items);
+      setSelectedCustomerId((current) => current || data.items[0]?.id || "");
+    } catch (caught) {
+      setCustomerError(caught instanceof Error ? caught.message : "Could not load customers.");
+    } finally {
+      setCustomerLoading(false);
+    }
+  }, []);
+
+  const loadCustomerLedger = useCallback(async (customerId = selectedCustomerId) => {
+    if (!customerId) {
+      setCustomerLedger([]);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/v1/customers/${customerId}/ledger`, { headers });
+      if (!response.ok) throw new Error(await apiError(response, "Could not load customer ledger."));
+      const data = (await response.json()) as { items: CustomerLedgerItem[] };
+      setCustomerLedger(data.items);
+    } catch (caught) {
+      setCustomerError(caught instanceof Error ? caught.message : "Could not load customer ledger.");
+    }
+  }, [selectedCustomerId]);
+
+  const loadSalesHistory = useCallback(async () => {
+    try {
+      const response = await fetch("/api/v1/sales?limit=100", { headers });
+      if (!response.ok) throw new Error(await apiError(response, "Could not load sales history."));
+      const data = (await response.json()) as { items: SaleHistoryItem[] };
+      setSalesHistory(data.items);
+    } catch (caught) {
+      setCustomerError(caught instanceof Error ? caught.message : "Could not load sales history.");
+    }
+  }, []);
+
   const loadInventory = useCallback(async () => {
     setInventoryLoading(true);
     setInventoryError("");
@@ -326,6 +414,8 @@ export default function Home() {
     void loadDashboard();
     void loadInventory();
     void loadStockMovements();
+    void loadCustomers();
+    void loadSalesHistory();
     void loadAssistantStatus();
     setSpeakAnswers(window.localStorage.getItem("vittavani-speak-answers") === "true");
     setSpeechOutputSupported(
@@ -335,7 +425,11 @@ export default function Home() {
       recognitionRef.current?.abort();
       window.speechSynthesis?.cancel();
     };
-  }, [loadAssistantStatus, loadDashboard, loadInventory, loadStockMovements]);
+  }, [loadAssistantStatus, loadDashboard, loadInventory, loadStockMovements, loadCustomers, loadSalesHistory]);
+
+  useEffect(() => {
+    void loadCustomerLedger();
+  }, [loadCustomerLedger]);
 
   useEffect(() => {
     function closeMenuOnEscape(event: KeyboardEvent) {
@@ -451,6 +545,103 @@ export default function Home() {
     });
   }
 
+  async function saveCustomer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCustomerError("");
+    setCustomerNotice("");
+    const path = customerEditingId ? `/api/v1/customers/${customerEditingId}` : "/api/v1/customers";
+    try {
+      const response = await fetch(path, {
+        method: customerEditingId ? "PUT" : "POST",
+        headers,
+        body: JSON.stringify({
+          name: customerForm.name,
+          phone: customerForm.phone || null,
+          address: customerForm.address || null,
+          notes: customerForm.notes || null,
+        }),
+      });
+      if (!response.ok) throw new Error(await apiError(response, "Could not save customer."));
+      const saved = (await response.json()) as Customer;
+      setCustomerNotice(customerEditingId ? "Customer details saved." : "Customer account created.");
+      setCustomerEditingId("");
+      setCustomerForm({ name: "", phone: "", address: "", notes: "" });
+      setSelectedCustomerId(saved.id);
+      await Promise.all([loadCustomers(), loadCustomerLedger(saved.id)]);
+    } catch (caught) {
+      setCustomerError(caught instanceof Error ? caught.message : "Could not save customer.");
+    }
+  }
+
+  async function recordCustomerPayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCustomerId) return;
+    setCustomerError("");
+    setCustomerNotice("");
+    customerPaymentKeyRef.current ??= window.crypto.randomUUID();
+    try {
+      const response = await fetch(`/api/v1/customers/${selectedCustomerId}/payments`, {
+        method: "POST",
+        headers: { ...headers, "Idempotency-Key": customerPaymentKeyRef.current },
+        body: JSON.stringify({ amount: customerPayment }),
+      });
+      if (!response.ok) throw new Error(await apiError(response, "Could not record payment."));
+      const result = (await response.json()) as { outstanding_balance: string };
+      customerPaymentKeyRef.current = null;
+      setCustomerPayment("");
+      setCustomerNotice(`Payment recorded. Outstanding balance: ₹${result.outstanding_balance}.`);
+      await Promise.all([
+        loadCustomers(),
+        loadCustomerLedger(selectedCustomerId),
+      ]);
+    } catch (caught) {
+      setCustomerError(caught instanceof Error ? caught.message : "Could not record payment.");
+    }
+  }
+
+  async function recordCustomerSale(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCustomerId) return;
+    setCustomerError("");
+    setCustomerNotice("");
+    customerSaleKeyRef.current ??= window.crypto.randomUUID();
+    const product = products.find((item) => item.id === customerSale.product_id) ?? products.find((item) => item.active);
+    const locationId = customerSale.location_id || locations[0]?.id;
+    if (!product || !locationId) {
+      setCustomerError("Add an active product and location before recording a sale.");
+      return;
+    }
+    try {
+      const response = await fetch("/api/v1/sales", {
+        method: "POST",
+        headers: { ...headers, "Idempotency-Key": customerSaleKeyRef.current },
+        body: JSON.stringify({
+          product_id: product.id,
+          location_id: locationId,
+          quantity: customerSale.quantity,
+          customer_id: selectedCustomerId,
+          paid_amount: customerSale.paid_amount,
+          unit: product.unit,
+        }),
+      });
+      if (!response.ok) throw new Error(await apiError(response, "Could not record sale."));
+      const result = (await response.json()) as { message: string; outstanding_balance: string };
+      customerSaleKeyRef.current = null;
+      setCustomerSale((current) => ({ ...current, quantity: "", paid_amount: "0" }));
+      setCustomerNotice(`${result.message} Outstanding balance: ₹${result.outstanding_balance}.`);
+      await Promise.all([
+        loadDashboard(),
+        loadInventory(),
+        loadStockMovements(),
+        loadCustomers(),
+        loadSalesHistory(),
+        loadCustomerLedger(selectedCustomerId),
+      ]);
+    } catch (caught) {
+      setCustomerError(caught instanceof Error ? caught.message : "Could not record sale.");
+    }
+  }
+
   function selectStockProduct(productId: string) {
     const product = products.find((item) => item.id === productId);
     setStockForm((current) => ({ ...current, product_id: productId, unit: product?.unit ?? "" }));
@@ -462,9 +653,12 @@ export default function Home() {
     setAnswer(null);
     setLoading(true);
     try {
+      if (commandRequestKeyRef.current?.query !== query) {
+        commandRequestKeyRef.current = { query, key: window.crypto.randomUUID() };
+      }
       const response = await fetch("/api/v1/ask", {
         method: "POST",
-        headers,
+        headers: { ...headers, "Idempotency-Key": commandRequestKeyRef.current.key },
         body: JSON.stringify({ query, mode: assistantMode }),
       });
       if (!response.ok) {
@@ -472,6 +666,19 @@ export default function Home() {
       }
       const result = (await response.json()) as Answer;
       setAnswer(result);
+      commandRequestKeyRef.current = null;
+      if (result.action_result) {
+        const actionCustomerId = result.action_result.customer_id;
+        if (typeof actionCustomerId === "string") setSelectedCustomerId(actionCustomerId);
+        await Promise.all([
+          loadDashboard(),
+          loadInventory(),
+          loadStockMovements(),
+          loadCustomers(),
+          loadSalesHistory(),
+          loadCustomerLedger(typeof actionCustomerId === "string" ? actionCustomerId : undefined),
+        ]);
+      }
       if (speakAnswers && "speechSynthesis" in window) {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(result.message);
@@ -583,6 +790,11 @@ export default function Home() {
       ? compareDecimalStrings(right.quantity, left.quantity) || left.name.localeCompare(right.name)
       : left.name.localeCompare(right.name)),
   [products, productSearch, productStatusFilter, productSort]);
+  const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId) ?? null;
+  const visibleCustomers = customers.filter((customer) => {
+    const term = customerSearch.trim().toLocaleLowerCase();
+    return !term || customer.name.toLocaleLowerCase().includes(term) || (customer.phone ?? "").includes(term);
+  });
   const aiStatusMessage = useMemo(() => aiStatusError
     ? aiStatusError
     : aiConfigured
@@ -1040,6 +1252,153 @@ export default function Home() {
             </section>
           </>
         )}
+      </section>
+
+      <section className="inventory-section auxiliary-section customer-section" id="customers" aria-labelledby="customers-title">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">CUSTOMER ACCOUNTS</p>
+            <h2 id="customers-title">Customers &amp; Udhar</h2>
+            <p className="intro">Record customer credit and payments; balances are calculated from the ledger.</p>
+          </div>
+          <button className="refresh-button" type="button" onClick={() => void loadCustomers()} disabled={customerLoading}>
+            {customerLoading ? "Loading…" : "↻ Refresh"}
+          </button>
+        </div>
+        {customerNotice && <p className="inventory-notice" role="status">{customerNotice}</p>}
+        {customerError && <p className="notice error" role="alert">{customerError}</p>}
+        <div className="customer-layout">
+          <section className="data-card customer-list-card" aria-label="Customer list">
+            <div className="card-heading">
+              <div><h3>Customers</h3><p>{customers.length} saved accounts</p></div>
+              <span className="count-pill">{customers.length}</span>
+            </div>
+            <label className="customer-search">Search by name or phone
+              <input type="search" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} />
+            </label>
+            <button
+              className="text-button customer-new-button"
+              type="button"
+              onClick={() => {
+                setCustomerEditingId("");
+                setCustomerForm({ name: "", phone: "", address: "", notes: "" });
+              }}
+            >
+              + Add customer
+            </button>
+            {customerLoading ? (
+              <p className="card-empty" role="status">Loading customers…</p>
+            ) : customers.length === 0 ? (
+              <p className="card-empty">No customer accounts yet. Add a customer to start tracking udhar.</p>
+            ) : visibleCustomers.length === 0 ? (
+              <p className="card-empty">No customers match that search.</p>
+            ) : (
+              <ul className="data-list customer-list">
+                {visibleCustomers.map((customer) => (
+                  <li key={customer.id}>
+                    <button
+                      className={`customer-select${customer.id === selectedCustomerId ? " customer-selected" : ""}`}
+                      type="button"
+                      onClick={() => setSelectedCustomerId(customer.id)}
+                    >
+                      <span><strong>{customer.name}</strong><small>{customer.phone || "No phone number"}</small></span>
+                      <span className="customer-balance">₹{customer.outstanding_balance}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <div className="customer-detail-column">
+            <section className="data-card" aria-labelledby="customer-form-title">
+              <div className="card-heading">
+                <div><h3 id="customer-form-title">{customerEditingId ? "Edit customer" : "Add customer"}</h3><p>Customer details are saved to this business account.</p></div>
+              </div>
+              <form className="inventory-form" onSubmit={saveCustomer}>
+                <label>Name<input required maxLength={160} value={customerForm.name} onChange={(event) => setCustomerForm({ ...customerForm, name: event.target.value })} /></label>
+                <label>Phone (optional)<input maxLength={32} value={customerForm.phone} onChange={(event) => setCustomerForm({ ...customerForm, phone: event.target.value })} /></label>
+                <label>Address (optional)<input maxLength={300} value={customerForm.address} onChange={(event) => setCustomerForm({ ...customerForm, address: event.target.value })} /></label>
+                <label>Notes (optional)<input maxLength={500} value={customerForm.notes} onChange={(event) => setCustomerForm({ ...customerForm, notes: event.target.value })} /></label>
+                <div className="form-actions">
+                  <button className="submit" type="submit">{customerEditingId ? "Save customer" : "Create customer"}</button>
+                  {customerEditingId && <button className="refresh-button" type="button" onClick={() => { setCustomerEditingId(""); setCustomerForm({ name: "", phone: "", address: "", notes: "" }); }}>Cancel</button>}
+                </div>
+              </form>
+            </section>
+
+            {selectedCustomer ? (
+              <>
+                <section className="data-card customer-account-card" aria-labelledby="customer-account-title">
+                  <div className="card-heading">
+                    <div><h3 id="customer-account-title">{selectedCustomer.name}</h3><p>{selectedCustomer.phone || "Phone not recorded"}</p></div>
+                    <button
+                      className="text-button"
+                      type="button"
+                      onClick={() => {
+                        setCustomerEditingId(selectedCustomer.id);
+                        setCustomerForm({
+                          name: selectedCustomer.name,
+                          phone: selectedCustomer.phone ?? "",
+                          address: selectedCustomer.address ?? "",
+                          notes: selectedCustomer.notes ?? "",
+                        });
+                      }}
+                    >
+                      Edit
+                    </button>
+                  </div>
+                  <p className="customer-outstanding">Outstanding <strong>₹{selectedCustomer.outstanding_balance}</strong></p>
+                  <form className="customer-inline-form" onSubmit={recordCustomerSale}>
+                    <strong>Record credit sale</strong>
+                    <label>Product<select required value={customerSale.product_id || products.find((product) => product.active)?.id || ""} onChange={(event) => setCustomerSale({ ...customerSale, product_id: event.target.value })}>
+                      {products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name} · {product.unit}</option>)}
+                    </select></label>
+                    <div className="form-row">
+                      <label>Location<select required value={customerSale.location_id || locations[0]?.id || ""} onChange={(event) => setCustomerSale({ ...customerSale, location_id: event.target.value })}>
+                        {locations.map((location) => <option key={location.id} value={location.id}>{location.full_name}</option>)}
+                      </select></label>
+                      <label>Quantity<input type="number" min="0.001" step="0.001" required value={customerSale.quantity} onChange={(event) => setCustomerSale({ ...customerSale, quantity: event.target.value })} /></label>
+                    </div>
+                    <label>Amount paid now (₹)<input type="number" min="0" step="0.01" required value={customerSale.paid_amount} onChange={(event) => setCustomerSale({ ...customerSale, paid_amount: event.target.value })} /></label>
+                    <button className="submit" type="submit">Save sale and update stock</button>
+                  </form>
+                  <form className="customer-inline-form" onSubmit={recordCustomerPayment}>
+                    <strong>Record payment received</strong>
+                    <label>Amount (₹)<input type="number" min="0.01" step="0.01" required value={customerPayment} onChange={(event) => setCustomerPayment(event.target.value)} /></label>
+                    <button className="refresh-button" type="submit">Record payment</button>
+                  </form>
+                </section>
+                <section className="data-card" aria-labelledby="customer-ledger-title">
+                  <div className="card-heading"><div><h3 id="customer-ledger-title">Customer ledger</h3><p>Positive entries add to udhar; negative entries are payments.</p></div></div>
+                  {customerLedger.length === 0 ? <p className="card-empty">No ledger entries recorded.</p> : (
+                    <ul className="data-list customer-ledger">
+                      {customerLedger.map((entry) => (
+                        <li key={entry.id}>
+                          <span><strong>{entry.transaction_type.replaceAll("_", " ")}</strong><small>{new Date(entry.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}{entry.note ? ` · ${entry.note}` : ""}</small></span>
+                          <span className={entry.amount_delta.startsWith("-") ? "ledger-payment" : "ledger-debit"}>{entry.amount_delta.startsWith("-") ? "−" : "+"}₹{entry.amount_delta.replace("-", "")}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </>
+            ) : (
+              <section className="data-card"><p className="card-empty">{customerLoading ? "Loading customer account…" : "Select or add a customer to view their ledger and record a payment or credit sale."}</p></section>
+            )}
+          </div>
+        </div>
+        <section className="data-card sales-history-card" id="sales" aria-labelledby="sales-history-title">
+          <div className="card-heading"><div><h3 id="sales-history-title">Sales history</h3><p>Saved sales and amounts from the API</p></div><span className="count-pill">{salesHistory.length}</span></div>
+          {salesHistory.length === 0 ? <p className="card-empty">No sales have been recorded.</p> : (
+            <ul className="data-list">
+              {salesHistory.map((sale) => <li key={sale.id}>
+                <span><strong>{sale.product_name} · {sale.quantity} {sale.unit}</strong><small>{sale.customer_name ?? "Cash sale"} · {new Date(sale.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</small></span>
+                <span className="stock-quantity">₹{sale.total_amount}</span>
+              </li>)}
+            </ul>
+          )}
+        </section>
       </section>
 
       <section className="inventory-section auxiliary-section" id="locations" aria-labelledby="locations-title">

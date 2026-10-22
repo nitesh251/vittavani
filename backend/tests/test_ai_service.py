@@ -6,7 +6,12 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from app.ai_service import AIProviderError, _MAX_LOG_DETAIL_LENGTH, extract_product_query
+from app.ai_service import (
+    AIProviderError,
+    _MAX_LOG_DETAIL_LENGTH,
+    extract_business_command,
+    extract_product_query,
+)
 from app.config import Settings
 
 
@@ -265,3 +270,45 @@ def test_settings_load_ai_values_from_a_dotenv_file(tmp_path):
     assert loaded.groq_api_key == "local-test-key"
     assert loaded.ai_timeout_seconds == 100
     assert Path(Settings.model_config["env_file"]) == Path(__file__).resolve().parents[2] / ".env"
+
+
+def test_business_command_ai_output_is_validated_with_allowlisted_schema(configured_ai, monkeypatch):
+    completion = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "intent": "record_sale",
+                            "product_query": "Amul Butter",
+                            "quantity": "5",
+                            "unit": "packet",
+                        }
+                    )
+                }
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: BytesIO(json.dumps(completion).encode()),
+    )
+
+    command = extract_business_command("5 Amul Butter bik gaya")
+
+    assert command.intent.value == "record_sale"
+    assert command.quantity == 5
+    assert command.product_query == "Amul Butter"
+
+
+def test_business_command_ai_rejects_unimplemented_intents(configured_ai, monkeypatch):
+    completion = {
+        "choices": [{"message": {"content": '{"intent":"run_sql","query":"DROP TABLE"}'}}]
+    }
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: BytesIO(json.dumps(completion).encode()),
+    )
+
+    with pytest.raises(AIProviderError, match="invalid command"):
+        extract_business_command("delete all products")
