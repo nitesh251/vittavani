@@ -205,6 +205,8 @@ export default function Home() {
   const [aiModel, setAiModel] = useState("");
   const [assistantMode, setAssistantMode] = useState<AssistantMode>("normal");
   const [activeSection, setActiveSection] = useState("dashboard");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [productSearch, setProductSearch] = useState("");
   const [productStatusFilter, setProductStatusFilter] = useState("all");
   const [productSort, setProductSort] = useState("name");
@@ -316,6 +318,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    try {
+      setSidebarCollapsed(window.localStorage.getItem("vittavani-sidebar-collapsed") === "true");
+    } catch {
+      setSidebarCollapsed(false);
+    }
     void loadDashboard();
     void loadInventory();
     void loadStockMovements();
@@ -329,6 +336,29 @@ export default function Home() {
       window.speechSynthesis?.cancel();
     };
   }, [loadAssistantStatus, loadDashboard, loadInventory, loadStockMovements]);
+
+  useEffect(() => {
+    function closeMenuOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setMobileMenuOpen(false);
+    }
+    function closeMenuOnDesktop() {
+      if (window.innerWidth > 850) setMobileMenuOpen(false);
+    }
+    window.addEventListener("keydown", closeMenuOnEscape);
+    window.addEventListener("resize", closeMenuOnDesktop);
+    return () => {
+      window.removeEventListener("keydown", closeMenuOnEscape);
+      window.removeEventListener("resize", closeMenuOnDesktop);
+    };
+  }, []);
+
+  function toggleSidebar() {
+    const nextCollapsed = !sidebarCollapsed;
+    setSidebarCollapsed(nextCollapsed);
+    try {
+      window.localStorage.setItem("vittavani-sidebar-collapsed", String(nextCollapsed));
+    } catch {}
+  }
 
   async function writeInventory(path: string, method: "POST" | "PUT", body: object, success: string) {
     setWriting(true);
@@ -585,6 +615,16 @@ export default function Home() {
           <span className="brand-mark" aria-hidden="true"><span>வி</span></span>
           <span>Vittavani</span>
         </a>
+        <button
+          className="mobile-menu-button"
+          type="button"
+          aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+          aria-controls="workspace-sidebar"
+          aria-expanded={mobileMenuOpen}
+          onClick={() => setMobileMenuOpen((open) => !open)}
+        >
+          <span aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
+        </button>
         <label className="global-search">
           <span aria-hidden="true">⌕</span>
           <input
@@ -618,13 +658,45 @@ export default function Home() {
       </header>
 
       <div className="app-layout">
-        <aside className="sidebar" aria-label="Workspace navigation">
-          <p className="sidebar-caption">WORKSPACE</p>
+        {mobileMenuOpen && (
+          <button
+            className="mobile-sidebar-backdrop"
+            type="button"
+            aria-label="Close navigation menu"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+        )}
+        <aside
+          className={`sidebar${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileMenuOpen ? " sidebar-mobile-open" : ""}`}
+          id="workspace-sidebar"
+          aria-label="Workspace navigation"
+        >
+          <div className="sidebar-control-row">
+            <p className="sidebar-caption">WORKSPACE</p>
+            <button
+              className="sidebar-toggle"
+              type="button"
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-controls="workspace-sidebar"
+              aria-expanded={!sidebarCollapsed}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              onClick={toggleSidebar}
+            >
+              <span aria-hidden="true">{sidebarCollapsed ? "◨" : "◧"}</span>
+            </button>
+          </div>
           <nav className="sidebar-nav">
             {navigationItems.map((item) => "reason" in item ? (
-              <span className="nav-unavailable" title={item.reason} key={item.label}>
+              <span
+                className="nav-unavailable"
+                role="link"
+                aria-disabled="true"
+                aria-label={`${item.label}, not available yet`}
+                title={`${item.label}: ${item.reason}`}
+                key={item.label}
+              >
                 <span className="nav-icon" aria-hidden="true">{item.icon}</span>
-                {item.label}
+                <span className="nav-label">{item.label}</span>
                 <span className="sr-only">, not available yet</span>
                 <small>Later</small>
               </span>
@@ -632,12 +704,17 @@ export default function Home() {
               <a
                 className={activeSection === item.section ? "nav-active" : ""}
                 aria-current={activeSection === item.section ? "page" : undefined}
+                aria-label={item.label}
                 href={`#${item.section}`}
                 key={item.section}
-                onClick={() => setActiveSection(item.section)}
+                title={item.label}
+                onClick={() => {
+                  setActiveSection(item.section);
+                  setMobileMenuOpen(false);
+                }}
               >
                 <span className="nav-icon" aria-hidden="true">{item.icon}</span>
-                {item.label}
+                <span className="nav-label">{item.label}</span>
               </a>
             ))}
           </nav>
@@ -645,7 +722,7 @@ export default function Home() {
             <div className="sidebar-assistant-icon">✦</div>
             <strong>Business, by voice</strong>
             <p>Ask about real stock in English, Hindi, or Hinglish.</p>
-            <a href="#ask" onClick={() => setActiveSection("ask")}>Ask Vittavani <span aria-hidden="true">→</span></a>
+            <a href="#ask" onClick={() => { setActiveSection("ask"); setMobileMenuOpen(false); }}>Ask Vittavani <span aria-hidden="true">→</span></a>
           </div>
           <div className="sidebar-footer"><span className="sidebar-footer-mark">வி</span><span><strong>Vittavani</strong><small>by Vinayaka Services</small></span></div>
         </aside>
