@@ -131,7 +131,7 @@ const navigationItems = [
   { section: "dashboard", label: "Dashboard", icon: "▦" },
   { section: "sales", label: "Sales", icon: "↗" },
   { section: "inventory", label: "Inventory", icon: "▤" },
-  { section: "customers", label: "Customers & Udhar", icon: "♙" },
+  { section: "customers", label: "Customers & Accounts", icon: "♙" },
   { label: "Payments & Collections", icon: "↔", reason: "Payment workflows are not implemented." },
   { label: "Purchases", icon: "▣", reason: "Purchasing workflows are not implemented." },
   { label: "Expenses", icon: "◷", reason: "Expense workflows are not implemented." },
@@ -426,6 +426,32 @@ export default function Home() {
       window.speechSynthesis?.cancel();
     };
   }, [loadAssistantStatus, loadDashboard, loadInventory, loadStockMovements, loadCustomers, loadSalesHistory]);
+
+  useEffect(() => {
+    const pageSections = new Set(["dashboard", "sales", "inventory", "customers", "locations", "stock-movements", "ask"]);
+    const syncPageFromHash = () => {
+      const hash = decodeURIComponent(window.location.hash.slice(1));
+      const target = document.getElementById(hash);
+      const section = target?.closest<HTMLElement>("[data-page-section]")?.dataset.pageSection ?? hash;
+      setActiveSection(pageSections.has(section) ? section : "dashboard");
+    };
+    syncPageFromHash();
+    window.addEventListener("hashchange", syncPageFromHash);
+    return () => window.removeEventListener("hashchange", syncPageFromHash);
+  }, []);
+
+  useEffect(() => {
+    const pageTitles: Record<string, string> = {
+      dashboard: "Dashboard",
+      sales: "Sales",
+      inventory: "Inventory",
+      customers: "Customers & Accounts",
+      locations: "Locations",
+      "stock-movements": "Stock movements",
+      ask: "Ask Vittavani",
+    };
+    document.title = `${pageTitles[activeSection] ?? "Dashboard"} | Vittavani`;
+  }, [activeSection]);
 
   useEffect(() => {
     void loadCustomerLedger();
@@ -846,7 +872,7 @@ export default function Home() {
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                document.getElementById("inventory")?.scrollIntoView({ behavior: "smooth" });
+                window.location.hash = "inventory";
               }
             }}
             placeholder="Search products, aliases, SKU"
@@ -938,8 +964,8 @@ export default function Home() {
           </div>
           <div className="sidebar-footer"><span className="sidebar-footer-mark">வி</span><span><strong>Vittavani</strong><small>by Vinayaka Services</small></span></div>
         </aside>
-        <div className="workspace">
-      <section className="dashboard-section" id="dashboard" aria-labelledby="dashboard-title">
+        <div className={`workspace workspace-${activeSection}`}>
+      <section className="dashboard-section" id="dashboard" data-page-section="dashboard" hidden={activeSection !== "dashboard"} aria-labelledby="dashboard-title">
         <div className="section-heading">
           <div>
             <p className="eyebrow">YOUR BUSINESS AT A GLANCE</p>
@@ -1023,8 +1049,9 @@ export default function Home() {
                 <a className="quick-action action-blue" href="#stock-entry" onClick={() => { setStockMode("transfer"); setActiveSection("inventory"); }}><span>⇄</span><strong>Transfer stock</strong><small>Move between locations</small></a>
                 <a className="quick-action action-purple" href="#product-form-title" onClick={() => setActiveSection("inventory")}><span>▤</span><strong>Add product</strong><small>Grow your catalogue</small></a>
                 <a className="quick-action action-orange" href="#ask" onClick={() => setActiveSection("ask")}><span>✦</span><strong>Ask Vittavani</strong><small>Speak or type a question</small></a>
+                <a className="quick-action action-green" href="#customers" onClick={() => setActiveSection("customers")}><span>♙</span><strong>Customer accounts</strong><small>View balances and ledger</small></a>
               </div>
-              <p className="feature-boundary">Sales, customer udhar, payments, purchases, and expenses aren’t enabled yet—no sample figures are shown.</p>
+              <p className="feature-boundary">Sales and customer account activity are available from their pages. Figures are loaded from saved business records.</p>
             </section>
             <div className="dashboard-columns">
               <section className="data-card" aria-labelledby="low-stock-title">
@@ -1102,7 +1129,7 @@ export default function Home() {
         )}
       </section>
 
-      <section className="inventory-section" id="inventory" aria-labelledby="inventory-title">
+      <section className="inventory-section" id="inventory" data-page-section="inventory" hidden={activeSection !== "inventory"} aria-labelledby="inventory-title">
         <div className="section-heading">
           <div>
             <p className="eyebrow">PRODUCTS AND STOCK CONTROL</p>
@@ -1254,12 +1281,12 @@ export default function Home() {
         )}
       </section>
 
-      <section className="inventory-section auxiliary-section customer-section" id="customers" aria-labelledby="customers-title">
+      <section className="inventory-section auxiliary-section customer-section" id="customers" data-page-section="customers" hidden={activeSection !== "customers"} aria-labelledby="customers-title">
         <div className="section-heading">
           <div>
             <p className="eyebrow">CUSTOMER ACCOUNTS</p>
-            <h2 id="customers-title">Customers &amp; Udhar</h2>
-            <p className="intro">Record customer credit and payments; balances are calculated from the ledger.</p>
+            <h2 id="customers-title">Customers &amp; Accounts</h2>
+            <p className="intro">Manage customer accounts, credit sales, payments received, and outstanding balances.</p>
           </div>
           <button className="refresh-button" type="button" onClick={() => void loadCustomers()} disabled={customerLoading}>
             {customerLoading ? "Loading…" : "↻ Refresh"}
@@ -1289,7 +1316,7 @@ export default function Home() {
             {customerLoading ? (
               <p className="card-empty" role="status">Loading customers…</p>
             ) : customers.length === 0 ? (
-              <p className="card-empty">No customer accounts yet. Add a customer to start tracking udhar.</p>
+              <p className="card-empty">No customer accounts yet. Add a customer to begin recording account activity.</p>
             ) : visibleCustomers.length === 0 ? (
               <p className="card-empty">No customers match that search.</p>
             ) : (
@@ -1370,7 +1397,7 @@ export default function Home() {
                   </form>
                 </section>
                 <section className="data-card" aria-labelledby="customer-ledger-title">
-                  <div className="card-heading"><div><h3 id="customer-ledger-title">Customer ledger</h3><p>Positive entries add to udhar; negative entries are payments.</p></div></div>
+                  <div className="card-heading"><div><h3 id="customer-ledger-title">Customer ledger</h3><p>Positive entries increase the outstanding balance; negative entries record payments.</p></div></div>
                   {customerLedger.length === 0 ? <p className="card-empty">No ledger entries recorded.</p> : (
                     <ul className="data-list customer-ledger">
                       {customerLedger.map((entry) => (
@@ -1388,8 +1415,12 @@ export default function Home() {
             )}
           </div>
         </div>
-        <section className="data-card sales-history-card" id="sales" aria-labelledby="sales-history-title">
-          <div className="card-heading"><div><h3 id="sales-history-title">Sales history</h3><p>Saved sales and amounts from the API</p></div><span className="count-pill">{salesHistory.length}</span></div>
+      </section>
+
+      <section className="inventory-section auxiliary-section" id="sales" data-page-section="sales" hidden={activeSection !== "sales"} aria-labelledby="sales-history-title">
+        <div className="section-heading"><div><p className="eyebrow">RECORDED BUSINESS ACTIVITY</p><h2 id="sales-history-title">Sales</h2><p className="intro">Sales recorded for this business.</p></div></div>
+        <section className="data-card sales-history-card" aria-labelledby="sales-history-heading">
+          <div className="card-heading"><div><h3 id="sales-history-heading">Sales history</h3><p>Saved sales and amounts from the API</p></div><span className="count-pill">{salesHistory.length}</span></div>
           {salesHistory.length === 0 ? <p className="card-empty">No sales have been recorded.</p> : (
             <ul className="data-list">
               {salesHistory.map((sale) => <li key={sale.id}>
@@ -1401,7 +1432,7 @@ export default function Home() {
         </section>
       </section>
 
-      <section className="inventory-section auxiliary-section" id="locations" aria-labelledby="locations-title">
+      <section className="inventory-section auxiliary-section" id="locations" data-page-section="locations" hidden={activeSection !== "locations"} aria-labelledby="locations-title">
         <div className="section-heading">
           <div><p className="eyebrow">YOUR STORAGE MAP</p><h2 id="locations-title">Locations</h2><p className="intro">Browse your location hierarchy and recorded stock by unit.</p></div>
         </div>
@@ -1420,7 +1451,7 @@ export default function Home() {
         )}
       </section>
 
-      <section className="inventory-section auxiliary-section" id="stock-movements" aria-labelledby="stock-movements-title">
+      <section className="inventory-section auxiliary-section" id="stock-movements" data-page-section="stock-movements" hidden={activeSection !== "stock-movements"} aria-labelledby="stock-movements-title">
         <div className="section-heading">
           <div><p className="eyebrow">AUDIT TRAIL</p><h2 id="stock-movements-title">Stock movements</h2><p className="intro">Receipts, adjustments, and transfers recorded for your business.</p></div>
           <button className="refresh-button" type="button" onClick={() => void loadStockMovements()} disabled={movementLoading}>{movementLoading ? "Loading…" : "↻ Refresh"}</button>
@@ -1453,7 +1484,7 @@ export default function Home() {
         )}
       </section>
 
-      <section className="ask-section" id="ask" aria-labelledby="welcome-title">
+      <section className="ask-section" id="ask" data-page-section="ask" hidden={activeSection !== "ask"} aria-labelledby="welcome-title">
         <div className="assistant-heading">
           <span className="assistant-emblem" aria-hidden="true">✦</span>
           <p className="eyebrow">YOUR BUSINESS, IN YOUR WORDS</p>

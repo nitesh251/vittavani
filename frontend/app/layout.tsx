@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Vittavani — A product of Vinayaka Services",
+  title: "Dashboard | Vittavani",
   description: "Find your stock and storage locations by asking naturally.",
   applicationName: "Vittavani",
 };

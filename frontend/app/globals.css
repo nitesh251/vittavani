@@ -183,7 +183,7 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
   .topbar { height: auto; min-height: 66px; flex-wrap: wrap; padding: 9px 16px 7px; gap: 4px 8px; }
   .brand { gap: 7px; font-size: 16px; }
   .brand-mark { width: 31px; height: 31px; }
-  .dashboard-section, .inventory-section, .ask-section { width: calc(100% - 28px); }
+  .dashboard-section, .inventory-section, .ask-section { width: auto; }
   .dashboard-section { padding-top: 31px; }
   .section-heading { align-items: center; }
   .section-heading .intro { max-width: 230px; font-size: 13px; line-height: 1.4; }
@@ -261,10 +261,11 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
 .sidebar-footer strong, .sidebar-footer small { display: block; }
 .sidebar-footer strong { font-size: 11px; }
 .sidebar-footer small { margin-top: 3px; color: var(--muted); font-size: 11px; }
-.workspace { display: grid; flex: 1; min-width: 0; grid-template-columns: minmax(0, 1.55fr) minmax(315px, .82fr); grid-template-areas: "dashboard assistant" "inventory assistant" "locations locations" "movements movements"; align-content: start; align-items: start; column-gap: 24px; padding: 0 clamp(20px, 3vw, 42px) 30px; }
-.inventory-section.auxiliary-section { grid-area: locations; padding: 22px 0 13px; }
-.customer-section { grid-area: customers; min-width: 0; }
-#stock-movements { grid-area: movements; padding-bottom: 32px; }
+.workspace { display: block; flex: 1; min-width: 0; padding: 0 clamp(20px, 3vw, 42px) 30px; }
+.workspace > [data-page-section][hidden] { display: none !important; }
+.inventory-section.auxiliary-section { padding: 22px 0 13px; }
+.customer-section { min-width: 0; }
+#stock-movements { padding-bottom: 32px; }
 .section-heading .eyebrow { margin-bottom: 8px; }
 .heading-dot { color: var(--green); }
 .metric::after { position: absolute; right: -18px; bottom: -35px; width: 105px; height: 105px; border-radius: 50%; background: currentColor; content: ""; opacity: .045; }
@@ -414,16 +415,6 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
 .sidebar-toggle:hover, .mobile-menu-button:hover { background: var(--mint); color: var(--green-dark); }
 .sidebar-nav a, .nav-unavailable { min-width: 0; }
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace {
-  grid-template-areas:
-    "dashboard assistant"
-    "inventory assistant"
-    "customers assistant"
-    "locations assistant"
-    "movements assistant";
-  row-gap: 0;
-  overflow-x: clip;
-}
 .sidebar.sidebar-collapsed { flex-basis: 70px; width: 70px; padding-inline: 9px; }
 .sidebar-collapsed .sidebar-control-row { justify-content: center; }
 .sidebar-collapsed .sidebar-caption,
@@ -435,6 +426,7 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
 .sidebar-collapsed .nav-unavailable { justify-content: center; gap: 0; padding-inline: 0; }
 .sidebar-collapsed .nav-icon { flex: 0 0 24px; width: 24px; }
 .ask-section { min-width: 0; }
+.workspace-ask .ask-section { position: static; width: min(100%, 720px); margin: 22px auto; padding: 20px 0; }
 .mobile-sidebar-backdrop { display: none; }
 
 @media (max-width: 1120px) and (min-width: 851px) {
@@ -488,9 +480,6 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
   .sidebar-collapsed .nav-unavailable { justify-content: flex-start; gap: 11px; padding-inline: 11px; }
   .sidebar-collapsed .sidebar-control-row { justify-content: space-between; }
   .workspace {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "dashboard" "inventory" "customers" "locations" "movements" "assistant";
-    row-gap: 0;
     overflow-x: visible;
   }
   .customer-layout { grid-template-columns: minmax(0, 1fr); }
