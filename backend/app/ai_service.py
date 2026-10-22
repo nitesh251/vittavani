@@ -6,6 +6,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.config import MAX_AI_TIMEOUT_SECONDS, settings
+from app.command_service import BusinessCommand
 from app.query_understanding import Intent
 
 _MAX_PROVIDER_RESPONSE_BYTES = 32_768
@@ -94,27 +95,10 @@ def ai_is_configured() -> bool:
     )
 
 
-def extract_product_query(question: str) -> dict[str, str | None]:
+def _request_groq_completion(request_body: dict[str, object]) -> bytes:
     if not ai_is_configured():
         raise AIProviderError("AI Assistant is not configured.")
 
-    request_body = {
-        "model": settings.ai_model,
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Interpret a small-business inventory question. Return only a JSON object with "
-                    "intent (one of stock, location, low_stock, unknown) and product_query "
-                    "(the product name or null). Never answer with quantities, locations, SQL, or "
-                    "other facts. Use low_stock when the user asks for low stock."
-                ),
-            },
-            {"role": "user", "content": question},
-        ],
-    }
     request = Request(
         "https://api.groq.com/openai/v1/chat/completions",
         data=json.dumps(request_body).encode("utf-8"),
@@ -194,6 +178,67 @@ def extract_product_query(question: str) -> dict[str, str | None]:
         raise AIProviderError(
             "Could not connect to Groq. Check the backend network connection and try again."
         ) from exc
+    return response_body
+
+
+def extract_business_command(question: str) -> BusinessCommand:
+    response_body = _request_groq_completion(
+        {
+            "model": settings.ai_model,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Classify the business request using only these intent values: stock_query, "
+                        "location_query, low_stock_query, record_sale, receive_stock, create_product, "
+                        "update_product, transfer_stock, create_customer, record_credit_sale, "
+                        "record_customer_payment, customer_balance_query, customer_ledger_query, clarify. "
+                        "Return JSON fields only from: intent, product_query, quantity, unit, customer_query, "
+                        "amount, sale_price, location_query, source_location_query, destination_location_query. "
+                        "Use numbers as decimal strings. Do not invent missing values; omit unknown fields. "
+                        "When a required detail is missing or ambiguous, use clarify. Do not return SQL or "
+                        "claim an action was completed."
+                    ),
+                },
+                {"role": "user", "content": question},
+            ],
+        }
+    )
+
+    try:
+        if len(response_body) > _MAX_PROVIDER_RESPONSE_BYTES:
+            raise ValueError("response too large")
+        payload = json.loads(response_body)
+        content = payload["choices"][0]["message"]["content"]
+        return BusinessCommand.model_validate_json(content)
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
+        _log_provider_error("malformed_response", detail=type(exc).__name__)
+        raise AIProviderError(
+            "AI Assistant returned an invalid command. Try again or use Normal Search."
+        ) from exc
+
+
+def extract_product_query(question: str) -> dict[str, str | None]:
+    request_body: dict[str, object] = {
+        "model": settings.ai_model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Interpret a small-business inventory question. Return only a JSON object with "
+                    "intent (one of stock, location, low_stock, unknown) and product_query "
+                    "(the product name or null). Never answer with quantities, locations, SQL, or "
+                    "other facts. Use low_stock when the user asks for low stock."
+                ),
+            },
+            {"role": "user", "content": question},
+        ],
+    }
+    response_body = _request_groq_completion(request_body)
 
     if len(response_body) > _MAX_PROVIDER_RESPONSE_BYTES:
         _log_provider_error("malformed_response", detail="Response exceeded configured size limit")

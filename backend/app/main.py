@@ -1,4 +1,6 @@
 import secrets
+import hashlib
+import json
 from contextlib import contextmanager
 from decimal import Decimal
 from typing import Iterator, Literal
@@ -11,13 +13,26 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.ai_service import AI_INTENT_MAP, AIProviderError, ai_is_configured, extract_product_query
+from app.ai_service import AI_INTENT_MAP, AIProviderError, ai_is_configured, extract_business_command, extract_product_query
+from app.business_actions import customer_balance, post_customer_payment, post_receipt, post_sale
+from app.command_service import BusinessCommand, CommandIntent, interpret_command
+from app.command_execution import execute_command
 from app.config import settings
 from app.database import get_db
 from app.formatting import format_quantity, format_quantity_label
 from app.inventory_metrics import inventory_totals_subquery, is_low_stock, is_out_of_stock
 from app.location_paths import location_paths
-from app.models import InventoryBalance, Location, Product, ProductAlias, StockMovement
+from app.models import (
+    CommandRequest,
+    Customer,
+    CustomerLedgerEntry,
+    InventoryBalance,
+    Location,
+    Product,
+    ProductAlias,
+    Sale,
+    StockMovement,
+)
 from app.query_service import lookup_product
 from app.query_understanding import Intent
 
@@ -36,6 +51,7 @@ class AskRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=500)
     mode: Literal["normal", "ai"] = "normal"
+    confirmation: bool = False
 
 
 class AskResponse(BaseModel):
@@ -51,6 +67,76 @@ class AskResponse(BaseModel):
     mode: Literal["normal", "ai"] = "normal"
     provider: str | None = None
     model: str | None = None
+    action_result: dict[str, object] | None = None
+
+
+class CustomerCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=160)
+    phone: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=300)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class CustomerUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    phone: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=300)
+    notes: str | None = Field(default=None, max_length=500)
+    active: bool | None = None
+
+
+class CustomerResponse(BaseModel):
+    id: UUID
+    name: str
+    phone: str | None
+    address: str | None
+    notes: str | None
+    active: bool
+    outstanding_balance: str
+    created_at: str
+
+
+class CustomerList(BaseModel):
+    items: list[CustomerResponse]
+
+
+class CustomerLedgerResponse(BaseModel):
+    id: UUID
+    transaction_type: str
+    amount_delta: str
+    outstanding_balance: str
+    sale_id: UUID | None
+    note: str | None
+    created_at: str
+
+
+class CustomerLedgerList(BaseModel):
+    items: list[CustomerLedgerResponse]
+    outstanding_balance: str
+
+
+class SaleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: UUID
+    location_id: UUID
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+    customer_id: UUID | None = None
+    paid_amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    unit_price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    unit: str | None = Field(default=None, min_length=1, max_length=32)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class CustomerPaymentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class LocationCreate(BaseModel):
@@ -284,9 +370,106 @@ def _serialize_product(
 @app.post("/api/v1/ask", response_model=AskResponse)
 def ask(
     body: AskRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> AskResponse:
+    command = interpret_command(body.query)
+    if command is not None:
+        mutating_intents = {
+            CommandIntent.CREATE_CUSTOMER,
+            CommandIntent.RECORD_CUSTOMER_PAYMENT,
+            CommandIntent.RECORD_SALE,
+            CommandIntent.RECORD_CREDIT_SALE,
+            CommandIntent.RECEIVE_STOCK,
+            CommandIntent.CREATE_PRODUCT,
+            CommandIntent.UPDATE_PRODUCT,
+            CommandIntent.TRANSFER_STOCK,
+        }
+        needs_ai_details = command.intent in {
+            CommandIntent.CLARIFY,
+            CommandIntent.TRANSFER_STOCK,
+            CommandIntent.RECORD_CREDIT_SALE,
+        } and (
+            command.intent == CommandIntent.CLARIFY
+            or not command.product_query
+            or command.quantity is None
+        )
+        if needs_ai_details and body.mode == "ai":
+            if not ai_is_configured():
+                raise HTTPException(status_code=503, detail="AI Assistant is not configured; use Normal Search or add the missing details.")
+            try:
+                command = extract_business_command(body.query)
+            except AIProviderError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        if command.intent in mutating_intents and not idempotency_key:
+            raise HTTPException(status_code=400, detail="An Idempotency-Key header is required for business changes")
+        if idempotency_key and (not idempotency_key.strip() or len(idempotency_key) > 120):
+            raise HTTPException(status_code=422, detail="Idempotency-Key must contain 1 to 120 characters")
+
+        request_hash = hashlib.sha256(
+            json.dumps({"query": body.query, "mode": body.mode}, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        existing = None
+        if command.intent in mutating_intents:
+            existing = session.scalar(
+                select(CommandRequest).where(
+                    CommandRequest.business_id == business_id,
+                    CommandRequest.idempotency_key == idempotency_key,
+                )
+            )
+        if existing is not None:
+            if existing.payload_hash != request_hash:
+                raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+            return AskResponse.model_validate(existing.response_body)
+
+        try:
+            with _transaction(session):
+                result = execute_command(session, business_id, command)
+                if result is not None:
+                    response = AskResponse(
+                        intent=str(result["intent"]),
+                        original_query=body.query,
+                        product_name=result.get("product_name"),
+                        quantity=result.get("quantity"),
+                        unit=result.get("unit"),
+                        locations=list(result.get("locations", [])),
+                        candidates=list(result.get("candidates", [])),
+                        clarification_required=bool(result.get("clarification_required", False)),
+                        message=str(result["message"]),
+                        mode=body.mode,
+                        provider=settings.ai_provider if body.mode == "ai" else None,
+                        model=settings.ai_model if body.mode == "ai" else None,
+                        action_result=result.get("action_result"),
+                    )
+                    if (
+                        command.intent in mutating_intents
+                        and response.action_result is not None
+                        and idempotency_key is not None
+                    ):
+                        session.add(
+                            CommandRequest(
+                                business_id=business_id,
+                                idempotency_key=idempotency_key,
+                                payload_hash=request_hash,
+                                response_body=response.model_dump(mode="json"),
+                            )
+                        )
+                        session.flush()
+                    return response
+        except IntegrityError as exc:
+            session.rollback()
+            existing = session.scalar(
+                select(CommandRequest).where(
+                    CommandRequest.business_id == business_id,
+                    CommandRequest.idempotency_key == idempotency_key,
+                )
+            ) if idempotency_key else None
+            if existing is not None and existing.payload_hash == request_hash:
+                return AskResponse.model_validate(existing.response_body)
+            raise HTTPException(status_code=409, detail="Could not save command; refresh and retry") from exc
+
     interpreted_intent: Intent | None = None
     interpreted_product: str | None = None
     if body.mode == "ai":
@@ -337,6 +520,247 @@ def ai_status(
         "provider": settings.ai_provider if configured else None,
         "model": settings.ai_model if configured else None,
     }
+
+
+def _normalized_phone(phone: str | None) -> str | None:
+    if phone is None or not phone.strip():
+        return None
+    digits = "".join(character for character in phone if character.isdigit())
+    if not 7 <= len(digits) <= 15:
+        raise HTTPException(status_code=422, detail="Phone number must contain 7 to 15 digits")
+    return digits
+
+
+def _customer_response(session: Session, business_id: UUID, customer: Customer) -> CustomerResponse:
+    return CustomerResponse(
+        id=customer.id,
+        name=customer.name,
+        phone=customer.phone,
+        address=customer.address,
+        notes=customer.notes,
+        active=customer.active,
+        outstanding_balance=str(customer_balance(session, business_id, customer.id)),
+        created_at=customer.created_at.isoformat(),
+    )
+
+
+@app.get("/api/v1/customers", response_model=CustomerList)
+def list_customers(
+    search: str = Query(default="", max_length=160),
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> CustomerList:
+    query = select(Customer).where(Customer.business_id == business_id)
+    if search.strip():
+        term = f"%{search.strip().casefold()}%"
+        digits = "".join(character for character in search if character.isdigit())
+        conditions = [func.lower(Customer.name).like(term)]
+        if digits:
+            conditions.append(func.coalesce(Customer.phone, "").like(f"%{digits}%"))
+        query = query.where(conditions[0] if len(conditions) == 1 else conditions[0] | conditions[1])
+    customers = session.scalars(query.order_by(Customer.name, Customer.id)).all()
+    return CustomerList(items=[_customer_response(session, business_id, customer) for customer in customers])
+
+
+@app.post("/api/v1/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
+def create_customer(
+    body: CustomerCreate,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> CustomerResponse:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Customer name cannot be blank")
+    phone = _normalized_phone(body.phone)
+    if phone and session.scalar(
+        select(Customer.id).where(Customer.business_id == business_id, Customer.phone == phone)
+    ):
+        raise HTTPException(status_code=409, detail="A customer with this phone number already exists")
+    if phone is None and session.scalar(
+        select(Customer.id).where(
+            Customer.business_id == business_id,
+            func.lower(Customer.name) == name.casefold(),
+            Customer.phone.is_(None),
+        )
+    ):
+        raise HTTPException(status_code=409, detail="A customer with this name already exists; add a phone number to distinguish them")
+    try:
+        with _transaction(session):
+            customer = Customer(
+                business_id=business_id,
+                name=name,
+                phone=phone,
+                address=body.address.strip() if body.address and body.address.strip() else None,
+                notes=body.notes.strip() if body.notes and body.notes.strip() else None,
+            )
+            session.add(customer)
+            session.flush()
+            result = _customer_response(session, business_id, customer)
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="A customer with this phone number already exists") from exc
+    return result
+
+
+@app.put("/api/v1/customers/{customer_id}", response_model=CustomerResponse)
+def update_customer(
+    customer_id: UUID,
+    body: CustomerUpdate,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> CustomerResponse:
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="At least one customer field must be provided")
+    if "name" in changes:
+        changes["name"] = changes["name"].strip()
+        if not changes["name"]:
+            raise HTTPException(status_code=422, detail="Customer name cannot be blank")
+    if "phone" in changes:
+        changes["phone"] = _normalized_phone(changes["phone"])
+    for field in ("address", "notes"):
+        if field in changes and changes[field] is not None:
+            changes[field] = changes[field].strip() or None
+    try:
+        with _transaction(session):
+            customer = session.scalar(
+                select(Customer)
+                .where(Customer.business_id == business_id, Customer.id == customer_id)
+                .with_for_update()
+            )
+            if customer is None:
+                raise HTTPException(status_code=404, detail="Customer not found")
+            if changes.get("phone") and session.scalar(
+                select(Customer.id).where(
+                    Customer.business_id == business_id,
+                    Customer.phone == changes["phone"],
+                    Customer.id != customer_id,
+                )
+            ):
+                raise HTTPException(status_code=409, detail="A customer with this phone number already exists")
+            for field, value in changes.items():
+                setattr(customer, field, value)
+            session.flush()
+            result = _customer_response(session, business_id, customer)
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="A customer with this phone number already exists") from exc
+    return result
+
+
+@app.get("/api/v1/customers/{customer_id}/ledger", response_model=CustomerLedgerList)
+def customer_ledger(
+    customer_id: UUID,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> CustomerLedgerList:
+    customer = session.scalar(
+        select(Customer).where(Customer.business_id == business_id, Customer.id == customer_id)
+    )
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    entries = session.scalars(
+        select(CustomerLedgerEntry)
+        .where(
+            CustomerLedgerEntry.business_id == business_id,
+            CustomerLedgerEntry.customer_id == customer_id,
+        )
+        .order_by(CustomerLedgerEntry.created_at, CustomerLedgerEntry.id)
+    ).all()
+    balance = Decimal("0")
+    rows = []
+    for entry in entries:
+        balance += entry.amount_delta
+        rows.append(
+            CustomerLedgerResponse(
+                id=entry.id,
+                transaction_type=entry.transaction_type,
+                amount_delta=str(entry.amount_delta),
+                outstanding_balance=str(balance),
+                sale_id=entry.sale_id,
+                note=entry.note,
+                created_at=entry.created_at.isoformat(),
+            )
+        )
+    return CustomerLedgerList(
+        items=rows,
+        outstanding_balance=str(balance),
+    )
+
+
+@app.post("/api/v1/customers/{customer_id}/payments")
+def receive_customer_payment(
+    customer_id: UUID,
+    body: CustomerPaymentRequest,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        with _transaction(session):
+            customer = session.scalar(
+                select(Customer)
+                .where(
+                    Customer.business_id == business_id,
+                    Customer.id == customer_id,
+                    Customer.active.is_(True),
+                )
+                .with_for_update()
+            )
+            if customer is None:
+                raise HTTPException(status_code=404, detail="Customer not found")
+            balance = post_customer_payment(session, business_id, customer, body.amount, note=body.note)
+            response = {"customer_id": str(customer.id), "outstanding_balance": str(balance)}
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Could not record payment; retry the request") from exc
+    return response
+
+
+@app.post("/api/v1/sales", status_code=status.HTTP_201_CREATED)
+def create_sale(
+    body: SaleRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        with _transaction(session):
+            product = _require_active_product(session, business_id, body.product_id)
+            _validate_unit(product, body.unit)
+            customer = None
+            if body.customer_id is not None:
+                customer = session.scalar(
+                    select(Customer)
+                    .where(
+                        Customer.business_id == business_id,
+                        Customer.id == body.customer_id,
+                        Customer.active.is_(True),
+                    )
+                    .with_for_update()
+                )
+                if customer is None:
+                    raise HTTPException(status_code=404, detail="Customer not found")
+            sale = post_sale(
+                session,
+                business_id,
+                product,
+                body.location_id,
+                body.quantity,
+                customer=customer,
+                paid_amount=body.paid_amount,
+                unit_price=body.unit_price,
+                note=body.note,
+            )
+            if idempotency_key:
+                sale.idempotency_key = idempotency_key[:120]
+            session.flush()
+            response = {
+                "sale_id": str(sale.id),
+                "total_amount": str(sale.total_amount),
+                "paid_amount": str(sale.paid_amount),
+                "outstanding_balance": str(customer_balance(session, business_id, customer.id)) if customer else "0",
+                "message": f"Sale recorded for {product.name}. Total ₹{sale.total_amount}.",
+            }
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Duplicate sale or inventory conflict; refresh and retry") from exc
+    return response
 
 
 @app.get("/api/v1/dashboard", response_model=DashboardResponse)

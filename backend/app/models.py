@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    JSON,
     Numeric,
     String,
     UniqueConstraint,
@@ -166,4 +167,127 @@ class StockMovement(Base):
     reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
     initiated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class Customer(Base):
+    __tablename__ = "customers"
+    __table_args__ = (
+        UniqueConstraint("business_id", "id", name="uq_customers_business_id"),
+        UniqueConstraint("business_id", "phone", name="uq_customer_business_phone"),
+        Index("ix_customers_business_name", "business_id", "name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(160))
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class Sale(Base):
+    __tablename__ = "sales"
+    __table_args__ = (
+        UniqueConstraint("business_id", "id", name="uq_sales_business_id"),
+        UniqueConstraint("business_id", "idempotency_key", name="uq_sales_business_idempotency"),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("total_amount >= 0", name="ck_sale_total_nonnegative"),
+        CheckConstraint("paid_amount >= 0 AND paid_amount <= total_amount", name="ck_sale_paid_valid"),
+        Index("ix_sales_business_created", "business_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    customer_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class SaleLineItem(Base):
+    __tablename__ = "sale_line_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["business_id", "sale_id"],
+            ["sales.business_id", "sales.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "product_id"],
+            ["products.business_id", "products.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "location_id"],
+            ["locations.business_id", "locations.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("quantity > 0", name="ck_sale_line_quantity_positive"),
+        CheckConstraint("unit_price >= 0 AND line_total >= 0", name="ck_sale_line_amount_nonnegative"),
+        Index("ix_sale_lines_business_sale", "business_id", "sale_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    sale_id: Mapped[UUID]
+    product_id: Mapped[UUID]
+    location_id: Mapped[UUID]
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+
+
+class CustomerLedgerEntry(Base):
+    __tablename__ = "customer_ledger_entries"
+    __table_args__ = (
+        UniqueConstraint("business_id", "id", name="uq_customer_ledger_business_id"),
+        ForeignKeyConstraint(
+            ["business_id", "customer_id"],
+            ["customers.business_id", "customers.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "sale_id"],
+            ["sales.business_id", "sales.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("amount_delta <> 0", name="ck_customer_ledger_nonzero"),
+        Index("ix_customer_ledger_business_customer_created", "business_id", "customer_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    customer_id: Mapped[UUID]
+    sale_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    transaction_type: Mapped[str] = mapped_column(String(32))
+    amount_delta: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class CommandRequest(Base):
+    __tablename__ = "command_requests"
+    __table_args__ = (
+        UniqueConstraint("business_id", "idempotency_key", name="uq_command_business_key"),
+        Index("ix_command_requests_business_created", "business_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    idempotency_key: Mapped[str] = mapped_column(String(120))
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    response_body: Mapped[dict[str, object]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
