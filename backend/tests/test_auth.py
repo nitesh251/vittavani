@@ -76,6 +76,12 @@ def test_supabase_token_fails_closed_when_project_is_unconfigured():
     assert error.value.status_code == 503
 
 
+def test_malformed_supabase_token_returns_unauthorized_without_fetching_jwks():
+    with pytest.raises(HTTPException) as error:
+        auth.verify_supabase_access_token("not-a-jwt", "https://project.example")
+    assert error.value.status_code == 401
+
+
 def test_authenticated_business_scope_ignores_untrusted_business_query(database, monkeypatch):
     own_business = Business(name="My Shop")
     other_business = Business(name="Other Shop")
