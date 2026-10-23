@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { getSupabaseBrowserClient } from "../lib/supabase/client";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
@@ -11,6 +11,12 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const isSignup = mode === "signup";
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("error") === "verification") {
+      setError("That email verification link could not be completed. Request a new link and try again.");
+    }
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -30,7 +36,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         ? await client.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/onboarding` },
+          options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding` },
         })
         : await client.auth.signInWithPassword({ email, password });
       if (result.error) {
