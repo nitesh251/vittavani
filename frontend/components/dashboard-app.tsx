@@ -206,7 +206,7 @@ function Metric({
   value: string;
   detail: string;
   icon: string;
-  tone: "green" | "blue" | "purple" | "orange";
+  tone: "cyan" | "blue" | "purple" | "orange";
 }) {
   return (
     <article className={`metric metric-${tone}`}>
@@ -1023,7 +1023,7 @@ export default function Home() {
         {!dashboardLoading && !dashboardError && dashboard && (dashboard.product_count > 0 || (!inventoryLoading && !inventoryError && products.length > 0)) && (
           <>
             <div className="metrics-grid" aria-label="Inventory summary">
-              <Metric label="Active products" value={String(activeProductCount)} detail="Products in your catalogue" icon="▤" tone="green" />
+              <Metric label="Active products" value={String(activeProductCount)} detail="Products in your catalogue" icon="▤" tone="cyan" />
               <Metric
                 label="Stock on hand"
                 value={
@@ -1064,11 +1064,11 @@ export default function Home() {
                 <span className="panel-sparkle" aria-hidden="true">✦</span>
               </div>
               <div className="quick-actions">
-                <a className="quick-action action-green" href="#stock-entry" onClick={() => { setStockMode("receipt"); setActiveSection("inventory"); }}><span>＋</span><strong>Receive stock</strong><small>Record incoming items</small></a>
+                <a className="quick-action action-cyan" href="#stock-entry" onClick={() => { setStockMode("receipt"); setActiveSection("inventory"); }}><span>＋</span><strong>Receive stock</strong><small>Record incoming items</small></a>
                 <a className="quick-action action-blue" href="#stock-entry" onClick={() => { setStockMode("transfer"); setActiveSection("inventory"); }}><span>⇄</span><strong>Transfer stock</strong><small>Move between locations</small></a>
                 <a className="quick-action action-purple" href="#product-form-title" onClick={() => setActiveSection("inventory")}><span>▤</span><strong>Add product</strong><small>Grow your catalogue</small></a>
                 <a className="quick-action action-orange" href="#ask" onClick={() => setActiveSection("ask")}><span>✦</span><strong>Ask Vittavani</strong><small>Speak or type a question</small></a>
-                <a className="quick-action action-green" href="#customers" onClick={() => setActiveSection("customers")}><span>♙</span><strong>Customer accounts</strong><small>View balances and ledger</small></a>
+                <a className="quick-action action-cyan" href="#customers" onClick={() => setActiveSection("customers")}><span>♙</span><strong>Customer accounts</strong><small>View balances and ledger</small></a>
               </div>
               <p className="feature-boundary">Sales and customer account activity are available from their pages. Figures are loaded from saved business records.</p>
             </section>
