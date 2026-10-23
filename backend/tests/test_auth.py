@@ -81,11 +81,13 @@ def test_authenticated_business_scope_ignores_untrusted_business_query(database,
     other_business = Business(name="Other Shop")
     database.add_all([own_business, other_business])
     database.flush()
+    own_product = Product(business_id=own_business.id, name="Own product", unit="packet")
+    other_product = Product(business_id=other_business.id, name="Other product", unit="packet")
     database.add_all(
         [
             BusinessMember(business_id=own_business.id, auth_subject="owner-a", role="owner"),
-            Product(business_id=own_business.id, name="Own product", unit="packet"),
-            Product(business_id=other_business.id, name="Other product", unit="packet"),
+            own_product,
+            other_product,
         ]
     )
     database.commit()
@@ -100,8 +102,13 @@ def test_authenticated_business_scope_ignores_untrusted_business_query(database,
         with TestClient(main.app) as client:
             response = client.get(
                 "/api/v1/products",
-                headers={"Authorization": "******"},
+                headers={"Authorization": "Bearer " + "test-access-token"},
                 params={"business_id": str(other_business.id)},
+            )
+            mutation_response = client.put(
+                f"/api/v1/products/{other_product.id}",
+                headers={"Authorization": "Bearer " + "test-access-token"},
+                json={"name": "Hijacked product"},
             )
     finally:
         main.app.dependency_overrides.clear()
@@ -109,15 +116,44 @@ def test_authenticated_business_scope_ignores_untrusted_business_query(database,
 
     assert response.status_code == 200
     assert [product["name"] for product in response.json()["items"]] == ["Own product"]
+    assert mutation_response.status_code == 404
+    database.refresh(other_product)
+    assert other_product.name == "Other product"
 
 
-def test_repeated_onboarding_returns_the_same_workspace(database):
-    first = main.create_business(main.BusinessCreate(name="My Shop"), "owner-onboarding", database)
-    second = main.create_business(main.BusinessCreate(name="Different Name"), "owner-onboarding", database)
+def test_repeated_onboarding_returns_the_same_workspace(database, monkeypatch):
+    demo_business = Business(id=uuid4(), name="Preserved demo")
+    database.add(demo_business)
+    database.commit()
 
-    assert first.id == second.id
-    assert second.name == "My Shop"
-    assert database.scalar(select(func.count()).select_from(Business)) == 1
+    monkeypatch.setattr(main, "_bearer_subject", lambda _authorization: "owner-onboarding")
+
+    def override_db():
+        yield database
+
+    overrides = main.app.dependency_overrides.copy()
+    main.app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(main.app) as client:
+            first = client.post(
+                "/api/v1/business",
+                headers={"Authorization": "Bearer " + "test-access-token"},
+                json={"name": "My Shop"},
+            )
+            second = client.post(
+                "/api/v1/business",
+                headers={"Authorization": "Bearer " + "test-access-token"},
+                json={"name": "Different Name"},
+            )
+    finally:
+        main.app.dependency_overrides.clear()
+        main.app.dependency_overrides.update(overrides)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+    assert first.json()["id"] != str(demo_business.id)
+    assert second.json()["name"] == "My Shop"
+    assert database.scalar(select(func.count()).select_from(Business)) == 2
     assert database.scalar(select(func.count()).select_from(BusinessMember)) == 1
 
 

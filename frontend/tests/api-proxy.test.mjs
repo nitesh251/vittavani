@@ -109,7 +109,7 @@ test("rejects cross-origin writes", async () => {
   );
 
   assert.equal(response.status, 403);
-  assert.match((await response.json()).detail, /allowed development frontend origin/);
+  assert.match((await response.json()).detail, /allowed frontend origin/);
 });
 
 test("rejects cross-site GET requests", async () => {

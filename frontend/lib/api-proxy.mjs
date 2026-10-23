@@ -13,7 +13,7 @@ const endpointMethods = {
   "inventory/transfers": ["POST"],
 };
 
-function isAllowedDevOrigin(request, environment) {
+function isAllowedFrontendOrigin(request, environment) {
   const origin = request.headers.get("origin");
   if (!origin) return false;
   const configuredOrigins = environment.FRONTEND_ORIGIN
@@ -41,9 +41,9 @@ export async function proxyApiRequest(request, path, environment, fetcher, acces
       { status: 403 },
     );
   }
-  if (request.headers.get("origin") && !isAllowedDevOrigin(request, environment)) {
+  if (request.headers.get("origin") && !isAllowedFrontendOrigin(request, environment)) {
     return Response.json(
-      { detail: "Requests with an Origin header must use an allowed development frontend origin." },
+      { detail: "Requests with an Origin header must use an allowed frontend origin." },
       { status: 403 },
     );
   }
@@ -75,7 +75,7 @@ export async function proxyApiRequest(request, path, environment, fetcher, acces
         { status: 403 },
       );
     }
-    if (!isAllowedDevOrigin(request, environment)) {
+    if (!isAllowedFrontendOrigin(request, environment)) {
       return Response.json(
         { detail: "Business-data writes require an allowed frontend Origin header." },
         { status: 403 },

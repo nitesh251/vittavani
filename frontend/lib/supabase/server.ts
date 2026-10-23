@@ -8,6 +8,7 @@ export async function createSupabaseServerClient() {
 
   const cookieStore = await cookies();
   return createServerClient(config.url, config.key, {
+    cookieOptions: { secure: process.env.NODE_ENV === "production", sameSite: "lax" },
     cookies: {
       getAll() {
         return cookieStore.getAll();
@@ -26,8 +27,12 @@ export async function createSupabaseServerClient() {
 export async function getSupabaseAccessToken() {
   const client = await createSupabaseServerClient();
   if (!client) return null;
-  const { data: { user } } = await client.auth.getUser();
-  if (!user) return null;
-  const { data: { session } } = await client.auth.getSession();
-  return session?.access_token ?? null;
+  try {
+    const { data: { user } } = await client.auth.getUser();
+    if (!user) return null;
+    const { data: { session } } = await client.auth.getSession();
+    return session?.access_token ?? null;
+  } catch {
+    return null;
+  }
 }

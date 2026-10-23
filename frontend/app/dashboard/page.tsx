@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import DashboardApp from "../../components/dashboard-app";
 import { createSupabaseServerClient } from "../../lib/supabase/server";
 
+export const dynamic = "force-dynamic";
+
 const developmentBypass = process.env.NODE_ENV === "development"
   && Boolean(process.env.DEV_API_TOKEN && process.env.DEV_BUSINESS_ID);
 

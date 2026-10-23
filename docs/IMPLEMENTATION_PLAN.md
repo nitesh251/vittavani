@@ -17,6 +17,8 @@ The repository initially contained only the supplied product prompt: no applicat
 9. **Production readiness** — implement authentication, tenant isolation tests, reports, CI, security controls, backups, and recovery procedures.
 10. **Deployment** — document and verify local startup and production deployment.
 11. **Dashboard and assistant refinement** — resolve the frontend/backend development-token configuration seam; expose real location and movement views, inventory filters, and explicit Normal Search / optional grounded AI modes. Acceptance requires authentication and API regressions, persisted-data display, and honest provider-unavailable behavior.
+12. **Public identity and workspaces** — add public product/auth routes, Supabase SSR sessions, backend JWKS verification, owner onboarding, membership-derived tenant authorization, and an additive uniqueness migration. Preserve the existing dashboard component and development-only local token path.
+13. **Developer guide and visual system** — document verified setup/configuration/testing and production limitations; centralize Midnight Navy/White/Teal tokens and apply them without changing dashboard information architecture.
 
 ## Acceptance criteria
 
@@ -26,7 +28,8 @@ The repository initially contained only the supplied product prompt: no applicat
 - Production endpoints cannot trust caller-provided business identifiers or expose unauthenticated tenant data.
 - Tests substantiate every feature marked complete in `IMPLEMENTATION_STATUS.md`.
 - Unimplemented or unverified requirements remain explicitly marked as pending.
+- Supabase identity is independently verified by FastAPI; onboarding is idempotent, and protected data is selected only from the authenticated subject's membership.
 
 ## Delivery boundary
 
-This initial implementation establishes the data model, migration path, lookup pipeline, tests, and development UI. It does **not** claim to deliver a production SaaS: authentication/authorization, write workflows, reporting, speech handling, and deployment verification remain explicit follow-up work in the status document.
+The repository now includes the original inventory/assistant workflows, customer ledger, public/auth routes, and a Supabase-backed authentication path. External Supabase configuration, live PostgreSQL verification, production operations, and unimplemented product areas remain explicit follow-up work in the status document.
