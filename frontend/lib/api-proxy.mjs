@@ -7,6 +7,7 @@ const endpointMethods = {
   customers: ["GET", "POST"],
   sales: ["GET", "POST"],
   "stock-movements": ["GET"],
+  business: ["GET", "POST"],
   "inventory/receipts": ["POST"],
   "inventory/adjustments": ["POST"],
   "inventory/transfers": ["POST"],
@@ -15,10 +16,11 @@ const endpointMethods = {
 function isAllowedDevOrigin(request, environment) {
   const origin = request.headers.get("origin");
   if (!origin) return false;
-  const allowedOrigins = (
-    environment.DEV_FRONTEND_ORIGINS
-      ?? "http://localhost:3000,http://127.0.0.1:3000"
-  ).split(",").map((value) => value.trim());
+  const configuredOrigins = environment.FRONTEND_ORIGIN
+    ?? (environment.NODE_ENV === "development"
+      ? environment.DEV_FRONTEND_ORIGINS ?? "http://localhost:3000,http://127.0.0.1:3000"
+      : "");
+  const allowedOrigins = configuredOrigins.split(",").map((value) => value.trim()).filter(Boolean);
   try {
     return allowedOrigins.some((allowedOrigin) => new URL(allowedOrigin).origin === new URL(origin).origin);
   } catch {
@@ -32,17 +34,7 @@ function isUntrustedFetchSite(request) {
   return site === "cross-site" || (site === "same-site" && !request.headers.get("origin"));
 }
 
-export async function proxyApiRequest(request, path, environment, fetcher) {
-  if (environment.NODE_ENV !== "development") {
-    return Response.json(
-      {
-        detail:
-          "The development-token proxy is disabled outside Next.js development mode. Production authentication is not configured.",
-      },
-      { status: 503 },
-    );
-  }
-
+export async function proxyApiRequest(request, path, environment, fetcher, accessToken = null) {
   if (isUntrustedFetchSite(request)) {
     return Response.json(
       { detail: "Cross-site or unverified same-site requests are not allowed." },
@@ -79,30 +71,40 @@ export async function proxyApiRequest(request, path, environment, fetcher) {
   if (request.method === "POST" || request.method === "PUT") {
     if (!request.headers.get("origin")) {
       return Response.json(
-        { detail: "Inventory writes require an Origin header." },
+        { detail: "Business-data writes require an Origin header." },
         { status: 403 },
       );
     }
     if (!isAllowedDevOrigin(request, environment)) {
       return Response.json(
-        { detail: "Inventory writes require an allowed development frontend Origin header." },
+        { detail: "Business-data writes require an allowed frontend Origin header." },
         { status: 403 },
       );
     }
   }
 
-  const devToken = environment.DEV_API_TOKEN;
-  if (!devToken) {
+  const devToken = environment.NODE_ENV === "development" ? environment.DEV_API_TOKEN : "";
+  if (!accessToken && !devToken) {
+    if (environment.NODE_ENV === "development") {
+      return Response.json(
+        {
+          detail:
+            "Frontend development token is not configured. Set DEV_API_TOKEN in frontend/.env.local and restart Next.js.",
+        },
+        { status: 503 },
+      );
+    }
     return Response.json(
       {
-        detail:
-          "Frontend development token is not configured. Set DEV_API_TOKEN in frontend/.env.local and restart Next.js.",
+        detail: "Authentication required.",
       },
-      { status: 503 },
+      { status: 401 },
     );
   }
   const apiUrl = (environment.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
-  const headers = new Headers({ accept: "application/json", "X-Dev-Token": devToken });
+  const headers = new Headers({ accept: "application/json" });
+  if (accessToken) headers.set("Authorization", "Bearer " + accessToken);
+  else headers.set("X-Dev-Token", devToken);
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
   const idempotencyKey = request.headers.get("idempotency-key");

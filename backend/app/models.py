@@ -36,6 +36,7 @@ class BusinessMember(Base):
     __tablename__ = "business_members"
     __table_args__ = (
         UniqueConstraint("business_id", "auth_subject", name="uq_member_business_subject"),
+        Index("uq_business_members_auth_subject", "auth_subject", unique=True),
         Index("ix_business_members_auth_subject", "auth_subject"),
     )
 

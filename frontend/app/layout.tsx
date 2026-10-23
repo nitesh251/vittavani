@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Dashboard | Vittavani",
-  description: "Find your stock and storage locations by asking naturally.",
+  title: "Vittavani | Your business, easier to manage",
+  description: "A voice-first business assistant for Indian small businesses.",
   applicationName: "Vittavani",
 };
 

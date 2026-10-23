@@ -11,6 +11,7 @@
     "test:proxy": "node --test tests/api-proxy.test.mjs"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
     "next": "15.5.28",
     "react": "19.0.0",
     "react-dom": "19.0.0"

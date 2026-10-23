@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     dev_api_token: str = ""
     dev_business_id: str = ""
     frontend_origin: str = "http://localhost:3000"
+    supabase_url: str = ""
     ai_provider: str = ""
     ai_model: str = ""
     groq_api_key: str = ""

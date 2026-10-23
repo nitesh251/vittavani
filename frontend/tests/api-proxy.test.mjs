@@ -17,7 +17,7 @@ function request(path, method = "GET", headers = {}) {
   });
 }
 
-test("rejects production requests before route or method handling", async () => {
+test("rejects unauthenticated production API requests", async () => {
   const response = await proxyApiRequest(
     request("dashboard"),
     ["dashboard"],
@@ -25,8 +25,43 @@ test("rejects production requests before route or method handling", async () => 
     fetch,
   );
 
-  assert.equal(response.status, 503);
-  assert.match((await response.json()).detail, /disabled outside Next.js development mode/);
+  assert.equal(response.status, 401);
+  assert.match((await response.json()).detail, /Authentication required/);
+});
+
+test("forwards a server-verified session token to protected production APIs", async () => {
+  let forwardedOptions;
+  const response = await proxyApiRequest(
+    request("dashboard"),
+    ["dashboard"],
+    { NODE_ENV: "production", NEXT_PUBLIC_API_URL: "https://api.example" },
+    async (_url, options) => {
+      forwardedOptions = options;
+      return Response.json({ ok: true });
+    },
+    "session-access-token",
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(forwardedOptions.headers.get("Authorization"), ["Bearer", "session-access-token"].join(" "));
+  assert.equal(forwardedOptions.headers.has("X-Dev-Token"), false);
+});
+
+test("allows business onboarding through the API proxy", async () => {
+  let forwardedUrl;
+  const response = await proxyApiRequest(
+    request("business", "POST", { origin: "http://localhost:3000" }),
+    ["business"],
+    development,
+    async (url) => {
+      forwardedUrl = url;
+      return Response.json({ id: "business-id" }, { status: 201 });
+    },
+    "session-access-token",
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(forwardedUrl, "http://inventory.local/api/v1/business");
 });
 
 test("rejects unsupported methods with an Allow header", async () => {

@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.ai_service import AI_INTENT_MAP, AIProviderError, ai_is_configured, extract_business_command, extract_product_query
+from app.auth import verify_supabase_access_token
 from app.business_actions import customer_balance, post_customer_payment, post_receipt, post_sale
 from app.command_service import BusinessCommand, CommandIntent, interpret_command
 from app.command_execution import execute_command
@@ -23,6 +24,8 @@ from app.formatting import format_quantity, format_quantity_label
 from app.inventory_metrics import inventory_totals_subquery, is_low_stock, is_out_of_stock
 from app.location_paths import location_paths
 from app.models import (
+    Business,
+    BusinessMember,
     CommandRequest,
     Customer,
     CustomerLedgerEntry,
@@ -43,7 +46,7 @@ app.add_middleware(
     allow_origins=[settings.frontend_origin],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT"],
-    allow_headers=["Content-Type", "X-Dev-Token", "Idempotency-Key"],
+    allow_headers=["Authorization", "Content-Type", "X-Dev-Token", "Idempotency-Key"],
 )
 
 
@@ -138,6 +141,20 @@ class CustomerPaymentRequest(BaseModel):
 
     amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     note: str | None = Field(default=None, max_length=500)
+
+
+class BusinessCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=160)
+
+
+class BusinessResponse(BaseModel):
+    id: UUID
+    name: str
+    preferred_language: str
+    currency: str
+    timezone: str
 
 
 class LocationCreate(BaseModel):
@@ -324,11 +341,108 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def development_business_id(dev_token: str | None = Header(default=None, alias="X-Dev-Token")) -> UUID:
-    if settings.app_env != "development" or not settings.dev_api_token or not settings.dev_business_id:
-        raise HTTPException(status_code=503, detail="Protected API is not configured")
-    if dev_token is None or not secrets.compare_digest(dev_token, settings.dev_api_token):
+def _bearer_subject(authorization: str | None) -> str:
+    if authorization is None:
         raise HTTPException(status_code=401, detail="Authentication required")
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.casefold() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return verify_supabase_access_token(token.strip(), settings.supabase_url)
+
+
+def authenticated_subject(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> str:
+    return _bearer_subject(authorization)
+
+
+def development_business_id(
+    dev_token: str | None = Header(default=None, alias="X-Dev-Token"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    session: Session = Depends(get_db),
+) -> UUID:
+    if authorization is None:
+        if settings.app_env != "development" or not settings.dev_api_token or not settings.dev_business_id:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        if dev_token is None or not secrets.compare_digest(dev_token, settings.dev_api_token):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        try:
+            return UUID(settings.dev_business_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail="Protected API is not configured") from exc
+
+    subject = _bearer_subject(authorization)
+    members = session.scalars(
+        select(BusinessMember).where(BusinessMember.auth_subject == subject)
+    ).all()
+    if len(members) != 1:
+        raise HTTPException(status_code=403, detail="Business workspace setup is required")
+    return members[0].business_id
+
+
+@app.get("/api/v1/business", response_model=BusinessResponse)
+def get_business(
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> BusinessResponse:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Business not found")
+    return BusinessResponse(
+        id=business.id,
+        name=business.name,
+        preferred_language=business.preferred_language,
+        currency=business.currency,
+        timezone=business.timezone,
+    )
+
+
+@app.post("/api/v1/business", response_model=BusinessResponse)
+def create_business(
+    body: BusinessCreate,
+    subject: str = Depends(authenticated_subject),
+    session: Session = Depends(get_db),
+) -> BusinessResponse:
+    existing_member = session.scalar(
+        select(BusinessMember).where(BusinessMember.auth_subject == subject)
+    )
+    if existing_member is not None:
+        existing = session.get(Business, existing_member.business_id)
+        if existing is not None:
+            return BusinessResponse(
+                id=existing.id,
+                name=existing.name,
+                preferred_language=existing.preferred_language,
+                currency=existing.currency,
+                timezone=existing.timezone,
+            )
+
+    business = Business(name=body.name.strip())
+    if not business.name:
+        raise HTTPException(status_code=422, detail="Business name is required")
+    try:
+        session.add(business)
+        session.flush()
+        session.add(BusinessMember(business_id=business.id, auth_subject=subject, role="owner"))
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        existing_member = session.scalar(
+            select(BusinessMember).where(BusinessMember.auth_subject == subject)
+        )
+        if existing_member is None:
+            raise HTTPException(status_code=409, detail="Could not create the business workspace") from exc
+        existing = session.get(Business, existing_member.business_id)
+        if existing is None:
+            raise HTTPException(status_code=409, detail="Could not load the business workspace") from exc
+        business = existing
+    return BusinessResponse(
+        id=business.id,
+        name=business.name,
+        preferred_language=business.preferred_language,
+        currency=business.currency,
+        timezone=business.timezone,
+    )
     try:
         return UUID(settings.dev_business_id)
     except ValueError as exc:
