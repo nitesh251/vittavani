@@ -10,6 +10,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const isSignup = mode === "signup";
 
   useEffect(() => {
@@ -40,7 +41,20 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         })
         : await client.auth.signInWithPassword({ email, password });
       if (result.error) {
-        setError(result.error.message);
+        const normalizedError = result.error.message.toLocaleLowerCase();
+        setError(
+          normalizedError.includes("invalid login credentials")
+            ? "The email or password is incorrect. Check your details and try again."
+            : normalizedError.includes("email not confirmed")
+              ? "Verify your email before logging in."
+              : normalizedError.includes("too many requests")
+                ? "Too many attempts. Wait a moment and try again."
+                : isSignup && normalizedError.includes("already registered")
+                  ? "An account already exists for this email. Try logging in instead."
+                  : isSignup
+                    ? "Your account could not be created. Check your details and try again."
+                    : "You could not be signed in. Check your details and try again.",
+        );
       } else if (isSignup && !result.data.session) {
         setMessage("Check your email to verify your account, then return here to log in.");
       } else {
@@ -55,29 +69,42 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <main className="auth-page">
+    <main className={`auth-page${isSignup ? "" : " auth-page-login"}`}>
       <section className="auth-card" aria-labelledby="auth-title">
         <Link className="public-brand auth-brand" href="/">
           <span className="public-brand-mark" aria-hidden="true">வி</span>
           Vittavani
         </Link>
         <p className="public-eyebrow">{isSignup ? "START YOUR WORKSPACE" : "WELCOME BACK"}</p>
-        <h1 id="auth-title">{isSignup ? "Create your account" : "Log in to Vittavani"}</h1>
+        <h1 id="auth-title">{isSignup ? "Create your account" : "Welcome back to Vittavani"}</h1>
         <p className="auth-description">
-          {isSignup ? "Sign up as a business owner. You’ll create your business workspace next." : "Continue to your business workspace."}
+          {isSignup ? "Sign up as a business owner. You’ll create your business workspace next." : "Sign in to manage your business."}
         </p>
         <form className="auth-form" onSubmit={submit}>
           <label htmlFor="auth-email">Email address</label>
           <input id="auth-email" name="email" type="email" autoComplete="email" required maxLength={254} />
           <label htmlFor="auth-password">Password</label>
-          <input
-            id="auth-password"
-            name="password"
-            type="password"
-            autoComplete={isSignup ? "new-password" : "current-password"}
-            required
-            minLength={8}
-          />
+          <div className="auth-password-field">
+            <input
+              id="auth-password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              autoComplete={isSignup ? "new-password" : "current-password"}
+              required
+              minLength={8}
+            />
+            {!isSignup && (
+              <button
+                className="auth-password-toggle"
+                type="button"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((visible) => !visible)}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            )}
+          </div>
           {error && <p className="auth-error" role="alert">{error}</p>}
           {message && <p className="auth-message" role="status">{message}</p>}
           <button className="button button-primary auth-submit" disabled={submitting} type="submit">

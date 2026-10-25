@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { compareDecimalStrings } from "../lib/quantity.mjs";
+import { contextualizeFollowUp } from "../lib/conversation.mjs";
 import {
   getDisplayName,
   getProfileImageUrl,
@@ -13,10 +14,20 @@ import { getSupabaseBrowserClient } from "../lib/supabase/client";
 type Answer = {
   message: string;
   original_query: string;
+  product_name?: string | null;
   clarification_required: boolean;
   candidates: string[];
   intent?: string;
   action_result?: Record<string, unknown> | null;
+};
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  answer?: Answer;
+  retryQuery?: string;
+  requestKey?: string;
+  retryMode?: AssistantMode;
 };
 
 type Dashboard = {
@@ -153,6 +164,16 @@ const stockStatusLabels = {
   out_of_stock: "Out of stock",
   inactive: "Inactive",
 };
+const actionStatusLabels: Record<string, string> = {
+  record_sale: "Sale completed.",
+  receive_stock: "Stock receipt completed.",
+  transfer_stock: "Stock transfer completed.",
+  record_credit_sale: "Credit sale completed.",
+  record_customer_payment: "Payment recorded.",
+  create_product: "Product created.",
+  update_product: "Product updated.",
+  create_customer: "Customer account created.",
+};
 const navigationItems = [
   { section: "dashboard", label: "Dashboard", icon: "▦" },
   { section: "sales", label: "Sales", icon: "↗" },
@@ -234,6 +255,29 @@ function formatCurrency(amount: string, currency: string) {
   }
 }
 
+function formatAssistantContent(content: string): ReactNode[] {
+  const inline = (text: string) => text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={index}>{part.slice(1, -1)}</code>;
+    }
+    return part;
+  });
+
+  return content.split(/\n{2,}/).filter(Boolean).map((block, index) => {
+    const lines = block.split("\n");
+    if (lines.every((line) => /^\s*[-*•]\s+/.test(line))) {
+      return <ul key={index}>{lines.map((line, itemIndex) => <li key={itemIndex}>{inline(line.replace(/^\s*[-*•]\s+/, ""))}</li>)}</ul>;
+    }
+    if (lines.every((line) => /^\s*\d+[.)]\s+/.test(line))) {
+      return <ol key={index}>{lines.map((line, itemIndex) => <li key={itemIndex}>{inline(line.replace(/^\s*\d+[.)]\s+/, ""))}</li>)}</ol>;
+    }
+    return <p key={index}>{lines.map((line, lineIndex) => <span key={lineIndex}>{lineIndex > 0 && <br />}{inline(line)}</span>)}</p>;
+  });
+}
+
 function Metric({
   label,
   value,
@@ -261,8 +305,7 @@ function Metric({
 
 export default function Home() {
   const [query, setQuery] = useState("");
-  const [answer, setAnswer] = useState<Answer | null>(null);
-  const [error, setError] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(true);
@@ -320,7 +363,10 @@ export default function Home() {
   const [speaking, setSpeaking] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const askInputRef = useRef<HTMLTextAreaElement>(null);
-  const commandRequestKeyRef = useRef<{ query: string; key: string } | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const loadingRef = useRef(false);
+  const autoScrollChatRef = useRef(true);
+  const activeProductContextRef = useRef<string | null>(null);
   const customerSaleKeyRef = useRef<string | null>(null);
   const customerPaymentKeyRef = useRef<string | null>(null);
 
@@ -520,6 +566,13 @@ export default function Home() {
     const timer = window.setInterval(() => setClockNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const conversation = chatScrollRef.current;
+    if (conversation && autoScrollChatRef.current) {
+      conversation.scrollTop = conversation.scrollHeight;
+    }
+  }, [chatMessages, loading]);
 
   useEffect(() => {
     const pageSections = new Set(["dashboard", "sales", "inventory", "customers", "locations", "stock-movements", "ask"]);
@@ -797,27 +850,55 @@ export default function Home() {
     setStockForm((current) => ({ ...current, product_id: productId, unit: product?.unit ?? "" }));
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
-    setAnswer(null);
+  async function sendMessage(
+    messageText = query,
+    options: { requestKey?: string; requestMode?: AssistantMode; addUserMessage?: boolean; keepComposer?: boolean } = {},
+  ) {
+    if (loadingRef.current) return;
+    const originalQuery = messageText.trim();
+    if (!originalQuery) return;
+    const requestQuery = contextualizeFollowUp(originalQuery, activeProductContextRef.current);
+    const requestKey = options.requestKey ?? window.crypto.randomUUID();
+    const requestMode = options.requestMode ?? assistantMode;
+    loadingRef.current = true;
     setLoading(true);
+    if (!options.keepComposer) setQuery("");
+    if (options.addUserMessage !== false) {
+      autoScrollChatRef.current = true;
+      setChatMessages((messages) => [...messages, {
+        id: window.crypto.randomUUID(),
+        role: "user",
+        content: originalQuery,
+      }]);
+    }
     try {
-      if (commandRequestKeyRef.current?.query !== query) {
-        commandRequestKeyRef.current = { query, key: window.crypto.randomUUID() };
-      }
       const response = await fetch("/api/v1/ask", {
         method: "POST",
-        headers: { ...headers, "Idempotency-Key": commandRequestKeyRef.current.key },
-        body: JSON.stringify({ query, mode: assistantMode }),
+        headers: { ...headers, "Idempotency-Key": requestKey },
+        body: JSON.stringify({ query: requestQuery, mode: requestMode }),
       });
       if (!response.ok) {
         throw new Error(await apiError(response, "Could not reach Vittavani. Check that the API is running."));
       }
       const result = (await response.json()) as Answer;
-      setAnswer(result);
-      commandRequestKeyRef.current = null;
-      if (result.action_result) {
+      activeProductContextRef.current = result.product_name ?? null;
+      setChatMessages((messages) => [...messages, {
+        id: window.crypto.randomUUID(),
+        role: "assistant",
+        content: result.message,
+        answer: result,
+      }]);
+      const mutatingIntents = new Set([
+        "create_customer",
+        "record_customer_payment",
+        "record_sale",
+        "record_credit_sale",
+        "receive_stock",
+        "create_product",
+        "update_product",
+        "transfer_stock",
+      ]);
+      if (result.action_result && result.intent && mutatingIntents.has(result.intent)) {
         const actionCustomerId = result.action_result.customer_id;
         if (typeof actionCustomerId === "string") setSelectedCustomerId(actionCustomerId);
         await Promise.all([
@@ -839,10 +920,34 @@ export default function Home() {
         window.speechSynthesis.speak(utterance);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Something went wrong.");
+      setChatMessages((messages) => [...messages, {
+        id: window.crypto.randomUUID(),
+        role: "assistant",
+        content: caught instanceof Error ? caught.message : "Something went wrong.",
+        retryQuery: requestQuery,
+        requestKey,
+        retryMode: requestMode,
+      }]);
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendMessage();
+  }
+
+  function retryMessage(message: ChatMessage) {
+    if (!message.retryQuery || !message.requestKey || loadingRef.current) return;
+    setChatMessages((messages) => messages.filter((item) => item.id !== message.id));
+    void sendMessage(message.retryQuery, {
+      requestKey: message.requestKey,
+      requestMode: message.retryMode,
+      addUserMessage: false,
+      keepComposer: true,
+    });
   }
 
   function startListening() {
@@ -1767,7 +1872,7 @@ export default function Home() {
           <span className="assistant-emblem" aria-hidden="true">✦</span>
           <p className="eyebrow">YOUR BUSINESS, IN YOUR WORDS</p>
           <h2 id="welcome-title">Ask Vittavani</h2>
-          <p className="intro">Your business, in your words.</p>
+          <p className="intro">Ask a question or tell me what happened in your business.</p>
         </div>
         <div className="assistant-modes" role="group" aria-label="Assistant mode">
           <button type="button" className={assistantMode === "normal" ? "mode-active" : ""} aria-pressed={assistantMode === "normal"} onClick={() => setAssistantMode("normal")}>Normal Search</button>
@@ -1778,17 +1883,88 @@ export default function Home() {
               ? "Normal Search uses deterministic product, alias, and saved sales lookups; no AI service is required."
               : aiStatusMessage}
         </p>
-        <form className="ask-card" onSubmit={submit}>
-          <label htmlFor="business-query">What would you like to know?</label>
+        <div
+          className="chat-transcript"
+          ref={chatScrollRef}
+          role="log"
+          aria-live="polite"
+          aria-label="Conversation with Vittavani"
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            autoScrollChatRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+          }}
+        >
+          {chatMessages.length === 0 ? (
+            <div className="chat-empty-state">
+              <span className="chat-empty-icon" aria-hidden="true">✦</span>
+              <strong>How can I help with your business?</strong>
+              <p>Ask about saved stock and sales, or record a business update.</p>
+              <div className="examples chat-suggestions" aria-label="Suggested questions">
+                {examples.map((example) => (
+                  <button className="example" key={example} type="button" onClick={() => setQuery(example)}>
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="chat-message-list">
+              {chatMessages.map((message) => (
+                <article className={`chat-message chat-message-${message.role}`} key={message.id}>
+                  {message.role === "assistant" && <span className="chat-avatar" aria-hidden="true">வி</span>}
+                  <div className="chat-bubble">
+                    {message.role === "assistant"
+                      ? <div className="chat-message-content">{formatAssistantContent(message.content)}</div>
+                      : <p>{message.content}</p>}
+                    {message.answer?.candidates.length ? (
+                      <p className="result-detail">Options: {message.answer.candidates.join(", ")}</p>
+                    ) : null}
+                    {message.answer?.action_result && message.answer.intent && (
+                      <p className="chat-action-status">
+                        {actionStatusLabels[message.answer.intent] ?? "Business update completed."}
+                        {message.answer.action_result.sale_id != null
+                          ? ` · Ref ${String(message.answer.action_result.sale_id)}`
+                          : null}
+                      </p>
+                    )}
+                    {message.retryQuery && (
+                      <button className="chat-retry" type="button" onClick={() => retryMessage(message)} disabled={loading}>
+                        Retry request
+                      </button>
+                    )}
+                    {speakAnswers && speaking && message.answer && (
+                      <button className="text-button" type="button" onClick={stopSpeaking}>Stop spoken answer</button>
+                    )}
+                  </div>
+                </article>
+              ))}
+              {loading && (
+                <div className="chat-message chat-message-assistant" role="status" aria-label="Vittavani is responding">
+                  <span className="chat-avatar" aria-hidden="true">வி</span>
+                  <div className="chat-bubble chat-typing"><span /><span /><span /><small>Checking your business records…</small></div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <form className="ask-card chat-composer" onSubmit={submit}>
+          <label htmlFor="business-query">Message Vittavani</label>
           <textarea
             id="business-query"
             ref={askInputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Try “Amul butter kahan rakha hai?”"
-            rows={3}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendMessage();
+              }
+            }}
+            placeholder="Ask a question or describe a sale or stock update…"
+            rows={2}
             maxLength={500}
             required
+            disabled={loading}
           />
           <div className="ask-options">
             <label className="language-label" htmlFor="speech-language">Voice language
@@ -1817,39 +1993,31 @@ export default function Home() {
               onClick={startListening}
               aria-pressed={listening}
               aria-label={listening ? "Stop voice input" : "Start voice input"}
+              disabled={loading}
             >
               <span aria-hidden="true">{listening ? "■" : "🎙"}</span>
               {listening ? "Stop listening" : "Speak"}
             </button>
             <span className="text-hint">
-              {listening ? "Listening… speak now. Your words will appear above." : "Type a question or use your microphone"}
+              {listening ? "Listening… speak now. Your words will appear above." : "Enter to send · Shift+Enter for a new line"}
             </span>
             <button className="submit" type="submit" disabled={loading || !query.trim()}>
-              {loading ? "Checking…" : "Ask"}
+              {loading ? "Thinking…" : "Send"}
               <span aria-hidden="true"> →</span>
             </button>
           </div>
         </form>
-        <p className="voice-note">Voice input needs a supported browser and microphone permission. If it isn’t available, type your question. Choose Hindi / Hinglish for Hindi speech.</p>
+        <p className="voice-note chat-voice-note">Voice input needs a supported browser and microphone permission. If it isn’t available, type your message.</p>
         {voiceError && <p className="notice error" role="alert">{voiceError}</p>}
-        <div className="examples" aria-label="Example questions">
-          <span>Try asking</span>
-          {examples.map((example) => (
-            <button className="example" key={example} type="button" onClick={() => setQuery(example)}>
-              {example}
-            </button>
-          ))}
-        </div>
-        {error && <p className="notice error" role="alert">{error}</p>}
-        {answer && (
-          <section className="notice result" aria-live="polite" aria-label="Answer">
-            <p className="result-label">VITTAVANI · {answer.original_query}</p>
-            <p className="result-message">{answer.message}</p>
-            {answer.candidates.length > 0 && <p className="result-detail">Options: {answer.candidates.join(", ")}</p>}
-            {speakAnswers && speaking && (
-              <button className="text-button" type="button" onClick={stopSpeaking}>Stop spoken answer</button>
-            )}
-          </section>
+        {chatMessages.length > 0 && (
+          <div className="examples examples-compact" aria-label="Suggested questions">
+            <span>Try asking</span>
+            {examples.slice(0, 3).map((example) => (
+              <button className="example" key={example} type="button" onClick={() => setQuery(example)} disabled={loading}>
+                {example}
+              </button>
+            ))}
+          </div>
         )}
       </section>
         </div>

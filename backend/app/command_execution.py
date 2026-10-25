@@ -422,16 +422,34 @@ def execute_command(
             command.quantity,
             customer=customer,
             paid_amount=Decimal("0") if customer else None,
-            unit_price=command.sale_price,
+            unit_price=product.selling_price,
+        )
+        stock_remaining = session.scalar(
+            select(InventoryBalance.quantity).where(
+                InventoryBalance.business_id == business_id,
+                InventoryBalance.product_id == product.id,
+                InventoryBalance.location_id == location.id,
+            )
         )
         balance = customer_balance(session, business_id, customer.id) if customer else Decimal("0")
         return _command_result(
             command.intent.value,
-            f"Sale recorded for {format_quantity_label(command.quantity, product.unit)} of {product.name}. Total ₹{sale.total_amount}."
+            f"Sale recorded successfully. {format_quantity_label(command.quantity, product.unit)} of {product.name} "
+            f"at ₹{product.selling_price} each; total ₹{sale.total_amount}. "
+            f"Stock remaining: {format_quantity_label(stock_remaining or Decimal('0'), product.unit)} at {location.name}."
             + (f" {customer.name}'s outstanding balance is ₹{balance}." if customer else ""),
             product=product,
             quantity=command.quantity,
-            action_result={"sale_id": str(sale.id), "total_amount": str(sale.total_amount), "outstanding_balance": str(balance)},
+            action_result={
+                "sale_id": str(sale.id),
+                "quantity": str(command.quantity),
+                "unit": product.unit,
+                "unit_price": str(product.selling_price),
+                "total_amount": str(sale.total_amount),
+                "stock_remaining": str(stock_remaining or Decimal("0")),
+                "location": location.name,
+                "outstanding_balance": str(balance),
+            },
         )
 
     return None

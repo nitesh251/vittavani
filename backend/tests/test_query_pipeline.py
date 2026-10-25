@@ -50,6 +50,17 @@ def test_voice_and_typed_customer_commands_are_parsed(query, intent, customer, a
     assert command.amount == amount
 
 
+def test_sale_command_parses_number_words_and_ignores_hypothetical_sales():
+    command = interpret_command("I sold one HP Laptop")
+
+    assert command is not None
+    assert command.intent == CommandIntent.RECORD_SALE
+    assert command.product_query == "hp laptop"
+    assert command.quantity == Decimal("1")
+    assert interpret_command("Can I sell one HP Laptop?") is None
+    assert interpret_command("What if I sold one HP Laptop?") is None
+
+
 @pytest.fixture
 def session():
     engine = create_engine(
@@ -463,6 +474,36 @@ def test_voice_command_sale_commits_stock_and_is_idempotent(client, session):
         InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
     )) == Decimal("18.000")
     assert session.scalar(select(func.count(Sale.id)).where(Sale.business_id == BUSINESS_ID)) == 1
+    assert session.scalar(select(func.count(StockMovement.id)).where(
+        StockMovement.business_id == BUSINESS_ID,
+        StockMovement.movement_type == "sale",
+    )) == 1
+
+
+def test_number_word_sale_uses_saved_price_and_persists_transaction(client, session):
+    product = session.get(Product, UUID("00000000-0000-0000-0000-000000000020"))
+    product.selling_price = Decimal("15.00")
+    session.commit()
+    headers = {"X-Dev-Token": "local-test-token", "Idempotency-Key": "number-word-sale"}
+    payload = {"query": "I sold one Amul Butter at Shelf 2", "mode": "normal"}
+
+    response = client.post("/api/v1/ask", headers=headers, json=payload)
+    repeated = client.post("/api/v1/ask", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    result = response.json()["action_result"]
+    assert response.json()["intent"] == "record_sale"
+    assert result["unit_price"] == "15.00"
+    assert result["total_amount"] == "15.00"
+    assert result["sale_id"] == repeated.json()["action_result"]["sale_id"]
+    assert session.scalar(select(InventoryBalance.quantity).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == product.id,
+        InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000012"),
+    )) == Decimal("19.000")
+    sale = session.scalar(select(Sale).where(Sale.business_id == BUSINESS_ID))
+    assert sale is not None
+    assert sale.total_amount == Decimal("15.00")
     assert session.scalar(select(func.count(StockMovement.id)).where(
         StockMovement.business_id == BUSINESS_ID,
         StockMovement.movement_type == "sale",

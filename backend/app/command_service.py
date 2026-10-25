@@ -43,7 +43,35 @@ class BusinessCommand(BaseModel):
 
 
 _NUMERAL_TRANSLATION = str.maketrans("०१२३४५६७८९", "0123456789")
-_QUANTITY = re.compile(r"(?<!\w)(\d+(?:\.\d{1,3})?)(?!\w)")
+_NUMBER_WORDS = {
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+    "एक": "1",
+    "दो": "2",
+    "तीन": "3",
+    "चार": "4",
+    "पाँच": "5",
+    "पांच": "5",
+    "छह": "6",
+    "सात": "7",
+    "आठ": "8",
+    "नौ": "9",
+    "दस": "10",
+}
+_QUANTITY = re.compile(
+    r"(?<!\w)(\d+(?:\.\d{1,3})?|"
+    + "|".join(re.escape(word) for word in _NUMBER_WORDS)
+    + r")(?!\w)",
+    re.I,
+)
 _AMOUNT = re.compile(
     r"(?<!\w)(\d+(?:\.\d{1,2})?)\s*(?:₹|rs\.?|rupees?|rupaye|rupay|रुप(?:ये|ए)?)(?!\w)",
     re.I,
@@ -73,7 +101,8 @@ def _number(text: str, pattern: re.Pattern[str]) -> tuple[Decimal | None, str]:
     match = pattern.search(text)
     if match is None:
         return None, text
-    return Decimal(match.group(1)), text[:match.start()] + " " + text[match.end():]
+    number = _NUMBER_WORDS.get(match.group(1).casefold(), match.group(1))
+    return Decimal(number), text[:match.start()] + " " + text[match.end():]
 
 
 def _clean_entity(text: str) -> str | None:
@@ -179,10 +208,18 @@ def interpret_command(text: str) -> BusinessCommand | None:
             sale_price=amount,
         )
 
+    if normalized.startswith("what if ") or re.search(
+        r"\b(?:can|could|should|would|will|might|may|want|plan|planning)\b.{0,40}\b(?:sell|sold|bech|बेच)\b",
+        normalized,
+    ):
+        return None
+
     if any(phrase in normalized for phrase in ("sell", "sold", "bik gaya", "bik gaye", "bech do", "बेच", "बिक गया")):
         quantity, residue = _number(normalized, _QUANTITY)
         residue, location = _extract_location(residue)
-        product = _clean_entity(re.sub(r"\b(?:sell|sold|bik gaya|bik gaye|bech do|kar do|kardo)\b", " ", residue))
+        product_text = re.sub(r"\b(?:sell|sold|bik gaya|bik gaye|bech do|kar do|kardo)\b", " ", residue)
+        product_text = re.sub(r"^\s*(?:i|we)\s+", "", product_text)
+        product = _clean_entity(product_text)
         unit = _find_unit(normalized)
         return BusinessCommand(
             intent=CommandIntent.RECORD_SALE,
