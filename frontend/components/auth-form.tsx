@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
+import { PublicHeader } from "./public-header";
 import { getSupabaseBrowserClient } from "../lib/supabase/client";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
@@ -74,28 +75,26 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <main className="auth-page auth-page-auth">
-      <section className="signup-intro" aria-label="About Vittavani">
-        <Link className="brand auth-brand" href="/">
-          <span className="brand-mark" aria-hidden="true">வி</span>
-          Vittavani
-        </Link>
-        <p className="eyebrow">A CLEARER VIEW OF YOUR BUSINESS</p>
-        <h2>Your business, easier to manage.</h2>
-        <p className="signup-intro-copy">
-          Keep your inventory, sales, and business records together, with a voice-first assistant when you need it.
-        </p>
-        <ul className="signup-benefits">
-          <li><span aria-hidden="true">✓</span> Know what stock you have and where it is stored.</li>
-          <li><span aria-hidden="true">✓</span> Record sales and keep customer accounts up to date.</li>
-          <li><span aria-hidden="true">✓</span> Ask business questions in the language you prefer.</li>
-        </ul>
-      </section>
-      <section className="auth-card" aria-labelledby="auth-title">
-        <h1 id="auth-title">{isSignup ? "Create your Vittavani account" : "Welcome back to Vittavani"}</h1>
-        <p className="auth-description">
-          {isSignup ? "Start managing your business in one place." : "Sign in to manage your business."}
-        </p>
+    <>
+      <PublicHeader variant={isSignup ? "signup" : "login"} />
+      <main className="auth-page auth-page-auth">
+        <section className="signup-intro" aria-label="About Vittavani">
+          <p className="eyebrow">A CLEARER VIEW OF YOUR BUSINESS</p>
+          <h2>Your business, easier to manage.</h2>
+          <p className="signup-intro-copy">
+            Keep your inventory, sales, and business records together, with a voice-first assistant when you need it.
+          </p>
+          <ul className="signup-benefits">
+            <li><span aria-hidden="true">✓</span> Know what stock you have and where it is stored.</li>
+            <li><span aria-hidden="true">✓</span> Record sales and keep customer accounts up to date.</li>
+            <li><span aria-hidden="true">✓</span> Ask business questions in the language you prefer.</li>
+          </ul>
+        </section>
+        <section className="auth-card" aria-labelledby="auth-title">
+          <h1 id="auth-title">{isSignup ? "Create your Vittavani account" : "Welcome back to Vittavani"}</h1>
+          <p className="auth-description">
+            {isSignup ? "Start managing your business in one place." : "Sign in to manage your business."}
+          </p>
         <form className="auth-form" onSubmit={submit}>
           <label htmlFor="auth-email">Email address</label>
           <input id="auth-email" name="email" type="email" autoComplete="email" required maxLength={254} />
@@ -148,7 +147,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           <Link href={isSignup ? "/login" : "/signup"}>{isSignup ? "Log in" : "Create an account"}</Link>
         </p>
         <Link className="auth-home-link" href="/">Back to home</Link>
-      </section>
-    </main>
+        </section>
+      </main>
+    </>
   );
 }

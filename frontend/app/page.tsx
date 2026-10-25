@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PublicHeader } from "../components/public-header";
 
 const features = [
   {
@@ -70,35 +71,7 @@ const faqs = [
 export default function HomePage() {
   return (
     <main className="public-page">
-      <header className="public-header">
-        <Link className="public-brand" href="/" aria-label="Vittavani home">
-          <span className="public-brand-mark" aria-hidden="true">வி</span>
-          <span>Vittavani</span>
-        </Link>
-        <nav aria-label="Main navigation" className="public-nav">
-          <Link href="#features">Features</Link>
-          <Link href="#how-it-works">How it works</Link>
-          <Link href="#for-businesses">For Indian businesses</Link>
-          <Link href="#pricing">Pricing</Link>
-          <Link href="#faq">FAQ</Link>
-        </nav>
-        <div className="public-header-actions">
-          <Link className="public-login-link" href="/login">Log In</Link>
-          <Link className="button button-primary" href="/signup">Get Started <span aria-hidden="true">→</span></Link>
-        </div>
-        <details className="public-mobile-menu">
-          <summary aria-label="Open navigation menu"><span aria-hidden="true">☰</span><span className="public-mobile-menu-label">Menu</span></summary>
-          <nav aria-label="Mobile navigation">
-            <Link href="#features">Features</Link>
-            <Link href="#how-it-works">How it works</Link>
-            <Link href="#for-businesses">For Indian businesses</Link>
-            <Link href="#pricing">Pricing</Link>
-            <Link href="#faq">FAQ</Link>
-            <Link href="/login">Log In</Link>
-            <Link className="public-mobile-signup" href="/signup">Get Started <span aria-hidden="true">→</span></Link>
-          </nav>
-        </details>
-      </header>
+      <PublicHeader />
 
       <section className="public-hero" aria-labelledby="hero-heading">
         <div className="public-hero-copy">
