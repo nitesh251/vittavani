@@ -3,7 +3,7 @@ export function getDisplayName(user) {
   for (const value of [metadata?.full_name, metadata?.name, metadata?.display_name]) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
-  return typeof user?.email === "string" ? user.email.split("@")[0] : "";
+  return "";
 }
 
 export function getProfileInitials(name, email) {

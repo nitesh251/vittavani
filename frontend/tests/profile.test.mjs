@@ -8,9 +8,9 @@ import {
   getTimeGreeting,
 } from "../lib/profile.mjs";
 
-test("uses authenticated profile names and falls back to the email", () => {
+test("uses authenticated profile names without exposing an email prefix", () => {
   assert.equal(getDisplayName({ email: "shop@example.com", user_metadata: { full_name: "  Ravi Kumar " } }), "Ravi Kumar");
-  assert.equal(getDisplayName({ email: "shop@example.com", user_metadata: {} }), "shop");
+  assert.equal(getDisplayName({ email: "shop@example.com", user_metadata: {} }), "");
   assert.equal(getDisplayName(null), "");
 });
 

@@ -962,6 +962,15 @@ export default function Home() {
   const profileEmail = profileUser?.email?.trim() ?? "";
   const profileImageUrl = getProfileImageUrl(profileUser);
   const greeting = getTimeGreeting(clockNow, businessProfile?.timezone ?? "Asia/Kolkata");
+  const salesComparison = salesOverview
+    && salesOverview.current_period.sale_count > 0
+    && salesOverview.previous_period.sale_count > 0
+    ? {
+        direction: Number(salesOverview.current_period.total_amount) - Number(salesOverview.previous_period.total_amount),
+        current: salesOverview.current_period.total_amount,
+        previous: salesOverview.previous_period.total_amount,
+      }
+    : null;
   const profileEnabled = Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   );
@@ -1135,8 +1144,8 @@ export default function Home() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">YOUR BUSINESS AT A GLANCE</p>
-            <h1 id="dashboard-title">{greeting}{profileName ? `, ${profileName}` : ""}<span className="heading-dot">!</span></h1>
-            <p className="intro">Here’s what’s happening{businessProfile?.name ? ` at ${businessProfile.name}` : ""} in your inventory today.</p>
+            <h1 id="dashboard-title">{greeting}, {profileName || "there"}<span className="heading-dot">!</span></h1>
+            <p className="intro dashboard-supporting-line">Here’s what’s happening{businessProfile?.name ? ` at ${businessProfile.name}` : " in your business"} today.</p>
           </div>
           <button className="refresh-button" type="button" onClick={() => void loadDashboard()} disabled={dashboardLoading}>
             {dashboardLoading ? "Refreshing…" : "↻ Refresh"}
@@ -1169,6 +1178,10 @@ export default function Home() {
         )}
         {!dashboardLoading && !dashboardError && dashboard && (dashboard.product_count > 0 || (!inventoryLoading && !inventoryError && products.length > 0)) && (
           <>
+            <div className="inventory-glance-heading">
+              <h2>Inventory at a glance</h2>
+              <p>Key inventory metrics across your business.</p>
+            </div>
             <div className="metrics-grid" aria-label="Inventory summary">
               <Metric label="Active products" value={String(activeProductCount)} detail="Products in your catalogue" icon="▤" tone="cyan" />
               <Metric
@@ -1214,11 +1227,11 @@ export default function Home() {
                 <a className="quick-action action-cyan" href="#stock-entry" onClick={() => { setStockMode("receipt"); setActiveSection("inventory"); }}><span>＋</span><strong>Receive stock</strong><small>Record incoming items</small></a>
                 <a className="quick-action action-blue" href="#stock-entry" onClick={() => { setStockMode("transfer"); setActiveSection("inventory"); }}><span>⇄</span><strong>Transfer stock</strong><small>Move between locations</small></a>
                 <a className="quick-action action-purple" href="#product-form-title" onClick={() => setActiveSection("inventory")}><span>▤</span><strong>Add product</strong><small>Grow your catalogue</small></a>
-                <a className="quick-action action-orange" href="#ask" onClick={() => setActiveSection("ask")}><span>✦</span><strong>Ask Vittavani</strong><small>Speak or type a question</small></a>
+                <a className="quick-action action-orange" href="#customers" onClick={() => setActiveSection("customers")}><span>₹</span><strong>Create sale</strong><small>Record a customer sale</small></a>
                 <a className="quick-action action-cyan" href="#customers" onClick={() => setActiveSection("customers")}><span>♙</span><strong>Customer accounts</strong><small>View balances and ledger</small></a>
               </div>
-              <p className="feature-boundary">Sales and customer account activity are available from their pages. Figures are loaded from saved business records.</p>
             </section>
+            <div className="dashboard-operations">
             <div className="dashboard-columns">
               <section className="data-card" aria-labelledby="low-stock-title">
                 <div className="card-heading">
@@ -1291,6 +1304,7 @@ export default function Home() {
                 </ul>
               )}
             </section>
+            </div>
           </>
         )}
         {!dashboardLoading && !dashboardError && salesOverview && (
@@ -1303,8 +1317,8 @@ export default function Home() {
               <a className="view-all-link" href="#sales" onClick={() => setActiveSection("sales")}>Sales history <span aria-hidden="true">→</span></a>
             </div>
             <div className="sales-summary-grid">
-              <article><span>Sales today</span><strong>{formatCurrency(salesOverview.today.total_amount, salesOverview.currency)}</strong></article>
-              <article>
+              <article className="sales-kpi-blue"><span>Sales today</span><strong>{formatCurrency(salesOverview.today.total_amount, salesOverview.currency)}</strong></article>
+              <article className="sales-kpi-cyan">
                 <span>Quantity sold today</span>
                 <strong>
                   {salesOverview.today.quantity_by_unit.length
@@ -1312,8 +1326,8 @@ export default function Home() {
                     : "0"}
                 </strong>
               </article>
-              <article><span>Sales recorded today</span><strong>{salesOverview.today.sale_count}</strong></article>
-              <article><span>Pending customer balances</span><strong>{formatCurrency(salesOverview.pending_customer_balances, salesOverview.currency)}</strong></article>
+              <article className="sales-kpi-purple"><span>Sales transactions</span><strong>{salesOverview.today.sale_count}</strong><small>Completed sales recorded today</small></article>
+              <article className="sales-kpi-amber"><span>Pending customer dues</span><strong>{formatCurrency(salesOverview.pending_customer_balances, salesOverview.currency)}</strong></article>
             </div>
             {!recentSalesExist && (
               <p className="sales-empty-state">No sales were recorded in the last 7 days. Record sales to see trends and top-selling products here.</p>
@@ -1321,10 +1335,10 @@ export default function Home() {
             <div className="sales-detail-grid">
               <div>
                 <h3>Sales trend</h3>
-                <p className="sales-period-comparison">
-                  Last 7 days: {formatCurrency(salesOverview.current_period.total_amount, salesOverview.currency)}
-                  {" · "}previous 7 days: {formatCurrency(salesOverview.previous_period.total_amount, salesOverview.currency)}
-                </p>
+                {salesComparison && <p className="sales-period-comparison">
+                  Last 7 days: {formatCurrency(salesComparison.current, salesOverview.currency)}
+                  {" · "}previous 7 days: {formatCurrency(salesComparison.previous, salesOverview.currency)}
+                </p>}
                 <ol className="sales-trend" aria-label="Daily sales for the last 7 days">
                   {salesOverview.trend.map((day) => {
                     const amount = Number(day.total_amount);
@@ -1356,6 +1370,39 @@ export default function Home() {
               </div>
             </div>
             <p className="sales-data-note">{salesOverview.sales_status_note}</p>
+          </section>
+        )}
+        {!dashboardLoading && !dashboardError && (
+          <section className="business-insights" aria-labelledby="business-insights-title">
+            <div className="insights-heading">
+              <div><p className="eyebrow">RECORD-BASED GUIDANCE</p><h2 id="business-insights-title">Vittavani’s business insights</h2></div>
+              <span>Based on saved sales and stock data</span>
+            </div>
+            <div className="insight-list">
+              {salesComparison && salesOverview && (
+                <article className="insight-card insight-sales">
+                  <span className="insight-icon" aria-hidden="true">↗</span>
+                  <div>
+                    <h3>{salesComparison.direction > 0 ? "Recorded sales increased" : salesComparison.direction < 0 ? "Recorded sales decreased" : "Recorded sales were unchanged"}</h3>
+                    <p>The last seven days totalled {formatCurrency(salesComparison.current, salesOverview.currency)}, compared with {formatCurrency(salesComparison.previous, salesOverview.currency)} in the previous seven days.</p>
+                    <a href="#sales" onClick={() => setActiveSection("sales")}>View sales history <span aria-hidden="true">→</span></a>
+                  </div>
+                </article>
+              )}
+              {stockAlertRows.length > 0 && (
+                <article className="insight-card insight-stock">
+                  <span className="insight-icon" aria-hidden="true">!</span>
+                  <div>
+                    <h3>Review stock levels</h3>
+                    <p>{stockAlertRows[0].name} has {stockAlertRows[0].available} available against a minimum of {stockAlertRows[0].minimum}.</p>
+                    <a href="#inventory" onClick={() => setActiveSection("inventory")}>Review inventory <span aria-hidden="true">→</span></a>
+                  </div>
+                </article>
+              )}
+              {!salesComparison && stockAlertRows.length === 0 && (
+                <p className="insights-empty">More recorded sales or stock activity is needed to provide business-specific insights.</p>
+              )}
+            </div>
           </section>
         )}
       </section>
