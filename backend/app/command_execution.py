@@ -34,6 +34,11 @@ _UNIT_CANONICAL = {
     "liters": "litre",
     "litres": "litre",
     "liter": "litre",
+    "पैकेट": "packet",
+    "पैकेट्स": "packet",
+    "पीस": "piece",
+    "लिटर": "litre",
+    "किलो": "kg",
 }
 
 
@@ -182,6 +187,11 @@ def execute_command(
 ) -> dict[str, object] | None:
     if command.intent == CommandIntent.CLARIFY:
         return _clarification("I need more details before I can safely make that change.")
+    if command.intent == CommandIntent.UNSUPPORTED:
+        return _clarification(
+            "I can help with stock, product locations, sales, receipts, and transfers. "
+            "I can't complete that request."
+        )
     if command.intent == CommandIntent.DELETE_OR_REVERSE_RECORD:
         return _clarification(
             "Deleting customers/products and reversing posted transactions are not enabled yet; no records were changed."
@@ -339,7 +349,7 @@ def execute_command(
         )
         session.add(product)
         session.flush()
-        balance = post_receipt(
+        balance, movement_id = post_receipt(
             session, business_id, product, location.id, command.quantity, note="Opening stock"
         )
         return _command_result(
@@ -347,7 +357,12 @@ def execute_command(
             f"Created {product.name} and recorded {format_quantity_label(command.quantity, product.unit)} at {location.name}.",
             product=product,
             quantity=balance,
-            action_result={"product_id": str(product.id), "balance": str(balance), "location_id": str(location.id)},
+            action_result={
+                "product_id": str(product.id),
+                "balance": str(balance),
+                "location_id": str(location.id),
+                "stock_movement_id": str(movement_id),
+            },
         )
 
     if command.intent in {
@@ -360,6 +375,15 @@ def execute_command(
         if candidates:
             return _clarification("Which product did you mean?", candidates=candidates)
         if product is None:
+            if command.intent == CommandIntent.RECEIVE_STOCK:
+                return _clarification(
+                    f"I couldn't find {command.product_query or 'that product'} in this business's catalogue. "
+                    "Would you like to create it? I’ll need its unit and selling price."
+                )
+            if command.intent == CommandIntent.RECORD_SALE:
+                return _clarification(
+                    f"I couldn't find {command.product_query or 'that product'} in this business's catalogue."
+                )
             return _clarification("Tell me the product name.")
         if command.quantity is None:
             return _clarification(f"Tell me how many {product.unit} of {product.name}.")
@@ -393,13 +417,20 @@ def execute_command(
             location, candidates = _resolve_location(session, business_id, command.location_query)
             if location is None:
                 return _clarification("Choose the location where the stock was received.", candidates=candidates)
-            balance = post_receipt(session, business_id, product, location.id, command.quantity)
+            balance, movement_id = post_receipt(session, business_id, product, location.id, command.quantity)
             return _command_result(
                 command.intent.value,
-                f"Received {format_quantity_label(command.quantity, product.unit)} of {product.name} at {location.name}.",
+                f"Received {format_quantity_label(command.quantity, product.unit)} of {product.name} at {location.name}. "
+                f"Balance there is {format_quantity_label(balance, product.unit)}.",
                 product=product,
                 quantity=balance,
-                action_result={"location_id": str(location.id), "balance": str(balance)},
+                action_result={
+                    "location_id": str(location.id),
+                    "location": location.name,
+                    "quantity_received": str(command.quantity),
+                    "balance": str(balance),
+                    "stock_movement_id": str(movement_id),
+                },
             )
 
         customer = None

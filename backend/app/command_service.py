@@ -16,6 +16,7 @@ class CommandIntent(StrEnum):
     CREATE_PRODUCT = "create_product"
     UPDATE_PRODUCT = "update_product"
     TRANSFER_STOCK = "transfer_stock"
+    UNSUPPORTED = "unsupported_request"
     CREATE_CUSTOMER = "create_customer"
     RECORD_CREDIT_SALE = "record_credit_sale"
     RECORD_CUSTOMER_PAYMENT = "record_customer_payment"
@@ -83,6 +84,40 @@ _UNIT_WORDS = {
     "gram", "grams", "g", "litre", "litres", "liter", "liters", "लिटर", "किलो",
     "पैकेट", "पैकेट्स", "पीस",
 }
+_RECEIPT_PHRASES = (
+    "receive", "received", "bought", "buy", "purchase", "purchased",
+    "kharida", "kharide", "khareeda", "khareede", "kharidi",
+    "maal aaya", "maal aayi", "put in stock", "put into stock",
+    "stock mein daal do", "stock me daal do", "stock mein jod do", "stock me jod do",
+    "माल आया", "माल आई", "खरीदा", "खरीदे", "खरीदी", "स्टॉक में डालो",
+    "स्टॉक में जोड़ो", "स्टॉक में जोड़ दो",
+)
+_SALE_PHRASES = (
+    "sell", "sold", "sale ho gaya", "sale ho gya", "bik gaya", "bik gaye",
+    "bech do", "becha", "बेच", "बिक गया", "बिक गए", "बेचा",
+)
+_ENTITY_NOISE = (
+    "stock mein add karo", "stock me add karo", "stock mein daal do", "stock me daal do",
+    "stock mein jod do", "stock me jod do", "put in stock", "put into stock",
+    "to inventory", "in inventory",
+    "to the inventory", "into inventory", "to stock", "in stock", "into stock",
+    "stock mein", "stock me", "inventory", "stock", "add stock", "add to stock",
+    "add to inventory", "add", "receive", "received", "bought", "buy", "purchase",
+    "purchased", "kharida", "kharide", "khareeda", "khareede", "kharidi",
+    "maal aaya", "maal aayi", "माल आया", "माल आई", "खरीदा", "खरीदे", "खरीदी",
+    "स्टॉक में डालो", "स्टॉक में जोड़ो", "स्टॉक में जोड़ दो", "डाल दो", "जोड़ो", "जोड़ दो",
+    "sale ho gaya", "sale ho gya", "bik gaya", "bik gaye", "bech do", "becha",
+    "sell", "sold", "बेच", "बिक गया", "बिक गए", "बेचा",
+    "kar do", "kardo", "karo", "do", "hai", "hain", "tha", "thi", "the",
+    "maine", "main", "i", "we", "have", "has", "of", "to", "the",
+    "packet", "packets", "pkt", "pkts", "piece", "pieces", "pcs", "unit", "units",
+    "bottle", "bottles", "kg", "kgs", "kilogram", "kilograms", "gram", "grams",
+    "g", "litre", "litres", "liter", "liters", "ke", "ka", "ki", "ko", "ne",
+    "de diye", "de diya", "diya", "udhar diya", "का", "के", "की", "को", "ने",
+    "से", "में", "दे दिए", "दे दिया", "दिए", "दिया", "उधार दिया", "पैकेट",
+    "पैकेट्स", "पीस",
+)
+_ADD_RECEIPT_CONTEXT = ("stock", "inventory", "maal", "सामान", "स्टॉक", "इन्वेंटरी")
 
 
 def _find_unit(text: str) -> str | None:
@@ -107,14 +142,20 @@ def _number(text: str, pattern: re.Pattern[str]) -> tuple[Decimal | None, str]:
 
 def _clean_entity(text: str) -> str | None:
     value = normalize_text(text.translate(_NUMERAL_TRANSLATION))
-    value = re.sub(
-        r"(?<!\w)(?:packet|packets|pkt|pkts|piece|pieces|pcs|unit|units|bottle|bottles|kg|kgs|kilogram|kilograms|gram|grams|g|litre|litres|liter|liters|of|ke|ka|ki|ko|ne|de diye|de diya|diya|"
-        r"udhar diya|का|के|की|को|ने|से|में|दे दिए|दे दिया|दिए|दिया|उधार दिया)(?!\w)",
-        " ",
-        value,
-    )
+    for phrase in sorted(_ENTITY_NOISE, key=len, reverse=True):
+        value = re.sub(rf"(?<!\w){re.escape(normalize_text(phrase))}(?!\w)", " ", value)
     value = re.sub(r"\s+", " ", value).strip(" .,!?-")
     return value or None
+
+
+def is_action_like_request(text: str) -> bool:
+    normalized = normalize_text(text.translate(_NUMERAL_TRANSLATION))
+    if normalized.startswith(("what if ", "can i sell ", "could i sell ", "should i sell ", "would i sell ")):
+        return False
+    return any(normalize_text(phrase) in normalized for phrase in (*_RECEIPT_PHRASES, *_SALE_PHRASES)) or (
+        re.search(r"(?<!\w)(?:add|put|daal|daalo|jodo|jod)(?!\w)", normalized) is not None
+        and any(normalize_text(context) in normalized for context in _ADD_RECEIPT_CONTEXT)
+    )
 
 
 def _extract_location(text: str) -> tuple[str, str | None]:
@@ -214,12 +255,10 @@ def interpret_command(text: str) -> BusinessCommand | None:
     ):
         return None
 
-    if any(phrase in normalized for phrase in ("sell", "sold", "bik gaya", "bik gaye", "bech do", "बेच", "बिक गया")):
+    if any(normalize_text(phrase) in normalized for phrase in _SALE_PHRASES):
         quantity, residue = _number(normalized, _QUANTITY)
         residue, location = _extract_location(residue)
-        product_text = re.sub(r"\b(?:sell|sold|bik gaya|bik gaye|bech do|kar do|kardo)\b", " ", residue)
-        product_text = re.sub(r"^\s*(?:i|we)\s+", "", product_text)
-        product = _clean_entity(product_text)
+        product = _clean_entity(residue)
         unit = _find_unit(normalized)
         return BusinessCommand(
             intent=CommandIntent.RECORD_SALE,
@@ -229,10 +268,18 @@ def interpret_command(text: str) -> BusinessCommand | None:
             location_query=location,
         )
 
-    if any(phrase in normalized for phrase in ("receive", "add kar do", "add stock", "stock add", "जोड़", "जोड")):
+    has_receipt_phrase = any(normalize_text(phrase) in normalized for phrase in _RECEIPT_PHRASES)
+    has_contextual_add = (
+        re.search(r"(?<!\w)(?:add|put|daal|daalo|jodo|jod)(?!\w)", normalized) is not None
+        and (
+            any(normalize_text(context) in normalized for context in _ADD_RECEIPT_CONTEXT)
+            or any(re.search(rf"(?<!\w){re.escape(unit)}(?!\w)", normalized) for unit in _UNIT_WORDS)
+        )
+    )
+    if has_receipt_phrase or has_contextual_add:
         quantity, residue = _number(normalized, _QUANTITY)
         residue, location = _extract_location(residue)
-        product = _clean_entity(re.sub(r"\b(?:receive|add|add stock|stock|kar do|kardo)\b", " ", residue))
+        product = _clean_entity(residue)
         unit = _find_unit(normalized)
         return BusinessCommand(
             intent=CommandIntent.RECEIVE_STOCK,

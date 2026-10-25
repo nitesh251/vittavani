@@ -5,6 +5,8 @@ const endpointMethods = {
   products: ["GET", "POST"],
   locations: ["GET", "POST"],
   customers: ["GET", "POST"],
+  suppliers: ["GET", "POST"],
+  "supplier-purchases": ["POST"],
   sales: ["GET", "POST"],
   "stock-movements": ["GET"],
   business: ["GET", "POST"],
@@ -58,6 +60,8 @@ export async function proxyApiRequest(request, path, environment, fetcher, acces
     methods = ["PUT"];
   } else if (!methods && /^customers\/[0-9a-f-]{36}\/(?:ledger|payments)$/i.test(endpoint)) {
     methods = endpoint.endsWith("/ledger") ? ["GET"] : ["POST"];
+  } else if (!methods && /^suppliers\/[0-9a-f-]{36}\/(?:purchases|payments)$/i.test(endpoint)) {
+    methods = endpoint.endsWith("/purchases") ? ["GET"] : ["POST"];
   }
   if (!methods) {
     return Response.json({ detail: "API route not found" }, { status: 404 });

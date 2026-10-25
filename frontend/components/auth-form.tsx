@@ -71,8 +71,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   return (
     <main className={`auth-page${isSignup ? "" : " auth-page-login"}`}>
       <section className="auth-card" aria-labelledby="auth-title">
-        <Link className="public-brand auth-brand" href="/">
-          <span className="public-brand-mark" aria-hidden="true">வி</span>
+        <Link className="brand auth-brand" href="/">
+          <span className="brand-mark" aria-hidden="true">வி</span>
           Vittavani
         </Link>
         <p className="public-eyebrow">{isSignup ? "START YOUR WORKSPACE" : "WELCOME BACK"}</p>

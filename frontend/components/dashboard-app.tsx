@@ -127,6 +127,34 @@ type SaleHistoryItem = {
   customer_name: string | null;
   created_at: string;
 };
+type Supplier = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  notes: string | null;
+  outstanding_balance: string;
+  recent_purchases: { id: string; invoice_reference: string | null; purchase_date: string; total_amount: string; paid_amount: string }[];
+};
+type SupplierPurchase = {
+  id: string;
+  invoice_reference: string | null;
+  purchase_date: string;
+  due_date: string | null;
+  total_amount: string;
+  paid_amount: string;
+  outstanding_balance: string;
+  lines: { product_id: string; product_name: string; location_name: string; quantity: string; unit: string; unit_price: string; line_total: string }[];
+  payments: { id: string; amount: string; note: string | null; created_at: string }[];
+};
+type SupplierPurchaseFormLine = {
+  product_id: string;
+  location_id: string;
+  quantity: string;
+  unit: string;
+  unit_price: string;
+};
 
 type SpeechRecognitionAlternative = { transcript: string };
 type SpeechRecognitionResult = ArrayLike<SpeechRecognitionAlternative> & { isFinal: boolean };
@@ -180,7 +208,7 @@ const navigationItems = [
   { section: "inventory", label: "Inventory", icon: "▤" },
   { section: "customers", label: "Customers & Accounts", icon: "♙" },
   { label: "Payments & Collections", icon: "↔", reason: "Payment workflows are not implemented." },
-  { label: "Purchases", icon: "▣", reason: "Purchasing workflows are not implemented." },
+  { section: "suppliers", label: "Suppliers", icon: "▣" },
   { label: "Expenses", icon: "◷", reason: "Expense workflows are not implemented." },
   { section: "locations", label: "Locations", icon: "⌂" },
   { label: "Reports", icon: "▥", reason: "Financial reporting is not implemented." },
@@ -208,6 +236,17 @@ async function apiError(response: Response, defaultMessage: string): Promise<str
     .json()
     .then((data: { detail?: string }) => data.detail ?? defaultMessage)
     .catch(() => defaultMessage);
+}
+
+function requestKeyFor(
+  reference: { current: { payload: string; key: string } | null },
+  payload: unknown,
+) {
+  const serialized = JSON.stringify(payload);
+  if (reference.current?.payload === serialized) return reference.current.key;
+  const key = window.crypto.randomUUID();
+  reference.current = { payload: serialized, key };
+  return key;
 }
 
 function movementLabel(value: string) {
@@ -316,6 +355,22 @@ export default function Home() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerLedger, setCustomerLedger] = useState<CustomerLedgerItem[]>([]);
   const [salesHistory, setSalesHistory] = useState<SaleHistoryItem[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [supplierPurchases, setSupplierPurchases] = useState<SupplierPurchase[]>([]);
+  const [selectedSupplierId, setSelectedSupplierId] = useState("");
+  const [supplierLoading, setSupplierLoading] = useState(true);
+  const [supplierError, setSupplierError] = useState("");
+  const [supplierNotice, setSupplierNotice] = useState("");
+  const [supplierForm, setSupplierForm] = useState({ name: "", phone: "", email: "", address: "", notes: "" });
+  const [supplierPurchaseForm, setSupplierPurchaseForm] = useState({
+    supplier_id: "",
+    invoice_reference: "",
+    purchase_date: "",
+    due_date: "",
+    paid_amount: "0",
+    lines: [{ product_id: "", location_id: "", quantity: "", unit: "", unit_price: "" }] as SupplierPurchaseFormLine[],
+  });
+  const [supplierPaymentForm, setSupplierPaymentForm] = useState({ purchase_id: "", amount: "", note: "" });
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customerLoading, setCustomerLoading] = useState(true);
   const [customerError, setCustomerError] = useState("");
@@ -369,6 +424,9 @@ export default function Home() {
   const activeProductContextRef = useRef<string | null>(null);
   const customerSaleKeyRef = useRef<string | null>(null);
   const customerPaymentKeyRef = useRef<string | null>(null);
+  const supplierCreateKeyRef = useRef<{ payload: string; key: string } | null>(null);
+  const supplierPurchaseKeyRef = useRef<{ payload: string; key: string } | null>(null);
+  const supplierPaymentKeyRef = useRef<{ payload: string; key: string } | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setDashboardLoading(true);
@@ -462,6 +520,45 @@ export default function Home() {
     }
   }, []);
 
+  const loadSuppliers = useCallback(async () => {
+    setSupplierLoading(true);
+    setSupplierError("");
+    try {
+      const response = await fetch("/api/v1/suppliers", { headers });
+      if (!response.ok) throw new Error(await apiError(response, "Could not load suppliers."));
+      const data = (await response.json()) as { items: Supplier[] };
+      setSuppliers(data.items);
+      setSelectedSupplierId((current) => current || data.items[0]?.id || "");
+      setSupplierPurchaseForm((current) => ({
+        ...current,
+        supplier_id: current.supplier_id || data.items[0]?.id || "",
+      }));
+    } catch (caught) {
+      setSupplierError(caught instanceof Error ? caught.message : "Could not load suppliers.");
+    } finally {
+      setSupplierLoading(false);
+    }
+  }, []);
+
+  const loadSupplierPurchases = useCallback(async (supplierId = selectedSupplierId) => {
+    if (!supplierId) {
+      setSupplierPurchases([]);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/v1/suppliers/${supplierId}/purchases`, { headers });
+      if (!response.ok) throw new Error(await apiError(response, "Could not load purchase history."));
+      const data = (await response.json()) as { items: SupplierPurchase[] };
+      setSupplierPurchases(data.items);
+      setSupplierPaymentForm((current) => ({
+        ...current,
+        purchase_id: data.items.find((purchase) => Number(purchase.outstanding_balance) > 0)?.id ?? "",
+      }));
+    } catch (caught) {
+      setSupplierError(caught instanceof Error ? caught.message : "Could not load purchase history.");
+    }
+  }, [selectedSupplierId]);
+
   const loadInventory = useCallback(async () => {
     setInventoryLoading(true);
     setInventoryError("");
@@ -509,6 +606,7 @@ export default function Home() {
     void loadStockMovements();
     void loadCustomers();
     void loadSalesHistory();
+    void loadSuppliers();
     void loadAssistantStatus();
     setSpeakAnswers(window.localStorage.getItem("vittavani-speak-answers") === "true");
     setSpeechOutputSupported(
@@ -518,7 +616,11 @@ export default function Home() {
       recognitionRef.current?.abort();
       window.speechSynthesis?.cancel();
     };
-  }, [loadAssistantStatus, loadDashboard, loadInventory, loadStockMovements, loadCustomers, loadSalesHistory]);
+  }, [loadAssistantStatus, loadDashboard, loadInventory, loadStockMovements, loadCustomers, loadSalesHistory, loadSuppliers]);
+
+  useEffect(() => {
+    void loadSupplierPurchases();
+  }, [loadSupplierPurchases]);
 
   useEffect(() => {
     const client = getSupabaseBrowserClient();
@@ -843,6 +945,142 @@ export default function Home() {
     } catch (caught) {
       setCustomerError(caught instanceof Error ? caught.message : "Could not record sale.");
     }
+  }
+
+  async function createSupplier(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSupplierError("");
+    setSupplierNotice("");
+    const payload = {
+      name: supplierForm.name,
+      phone: supplierForm.phone || null,
+      email: supplierForm.email || null,
+      address: supplierForm.address || null,
+      notes: supplierForm.notes || null,
+    };
+    const idempotencyKey = requestKeyFor(supplierCreateKeyRef, payload);
+    setWriting(true);
+    try {
+      const response = await fetch("/api/v1/suppliers", {
+        method: "POST",
+        headers: { ...headers, "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error(await apiError(response, "Could not save supplier."));
+      const saved = (await response.json()) as { id: string; name: string };
+      supplierCreateKeyRef.current = null;
+      setSupplierForm({ name: "", phone: "", email: "", address: "", notes: "" });
+      setSupplierPurchaseForm((current) => ({ ...current, supplier_id: saved.id }));
+      setSelectedSupplierId(saved.id);
+      setSupplierNotice(`${saved.name} added to Suppliers.`);
+      await loadSuppliers();
+      await loadSupplierPurchases(saved.id);
+    } catch (caught) {
+      setSupplierError(caught instanceof Error ? caught.message : "Could not save supplier.");
+    } finally {
+      setWriting(false);
+    }
+  }
+
+  async function createSupplierPurchase(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSupplierError("");
+    setSupplierNotice("");
+    const payload = {
+      supplier_id: supplierPurchaseForm.supplier_id,
+      invoice_reference: supplierPurchaseForm.invoice_reference || null,
+      purchase_date: supplierPurchaseForm.purchase_date,
+      due_date: supplierPurchaseForm.due_date || null,
+      paid_amount: supplierPurchaseForm.paid_amount,
+      lines: supplierPurchaseForm.lines.map((line) => ({
+        product_id: line.product_id,
+        location_id: line.location_id,
+        quantity: line.quantity,
+        unit: line.unit || null,
+        unit_price: line.unit_price,
+      })),
+    };
+    const idempotencyKey = requestKeyFor(supplierPurchaseKeyRef, payload);
+    setWriting(true);
+    try {
+      const response = await fetch("/api/v1/supplier-purchases", {
+        method: "POST",
+        headers: { ...headers, "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error(await apiError(response, "Could not record supplier purchase."));
+      const result = (await response.json()) as {
+        purchase_id: string;
+        total_amount: string;
+        paid_amount: string;
+        outstanding_balance: string;
+      };
+      supplierPurchaseKeyRef.current = null;
+      setSupplierNotice(
+        `Purchase recorded: ₹${result.total_amount} total, ₹${result.paid_amount} paid, ₹${result.outstanding_balance} outstanding.`,
+      );
+      setSupplierPurchaseForm((current) => ({
+        ...current,
+        invoice_reference: "",
+        due_date: "",
+        paid_amount: "0",
+        lines: [{ product_id: "", location_id: "", quantity: "", unit: "", unit_price: "" }],
+      }));
+      await Promise.all([
+        loadSuppliers(),
+        loadSupplierPurchases(payload.supplier_id),
+        loadDashboard(),
+        loadInventory(),
+        loadStockMovements(),
+      ]);
+    } catch (caught) {
+      setSupplierError(caught instanceof Error ? caught.message : "Could not record supplier purchase.");
+    } finally {
+      setWriting(false);
+    }
+  }
+
+  async function recordSupplierPayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedSupplierId) return;
+    setSupplierError("");
+    setSupplierNotice("");
+    const payload = {
+      purchase_id: supplierPaymentForm.purchase_id,
+      amount: supplierPaymentForm.amount,
+      note: supplierPaymentForm.note || null,
+    };
+    const idempotencyKey = requestKeyFor(supplierPaymentKeyRef, payload);
+    setWriting(true);
+    try {
+      const response = await fetch(`/api/v1/suppliers/${selectedSupplierId}/payments`, {
+        method: "POST",
+        headers: { ...headers, "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error(await apiError(response, "Could not record supplier payment."));
+      const result = (await response.json()) as {
+        amount: string;
+        supplier_outstanding_balance: string;
+      };
+      supplierPaymentKeyRef.current = null;
+      setSupplierPaymentForm((current) => ({ ...current, amount: "", note: "" }));
+      setSupplierNotice(
+        `Payment of ₹${result.amount} recorded. Supplier balance: ₹${result.supplier_outstanding_balance}.`,
+      );
+      await Promise.all([loadSuppliers(), loadSupplierPurchases(selectedSupplierId)]);
+    } catch (caught) {
+      setSupplierError(caught instanceof Error ? caught.message : "Could not record supplier payment.");
+    } finally {
+      setWriting(false);
+    }
+  }
+
+  function updateSupplierPurchaseLine(index: number, updates: Partial<SupplierPurchaseFormLine>) {
+    setSupplierPurchaseForm((current) => ({
+      ...current,
+      lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, ...updates } : line),
+    }));
   }
 
   function selectStockProduct(productId: string) {
@@ -1795,6 +2033,158 @@ export default function Home() {
               </>
             ) : (
               <section className="data-card"><p className="card-empty">{customerLoading ? "Loading customer account…" : "Select or add a customer to view their ledger and record a payment or credit sale."}</p></section>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="inventory-section auxiliary-section supplier-section" id="suppliers" data-page-section="suppliers" hidden={activeSection !== "suppliers"} aria-labelledby="suppliers-title">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">SUPPLIER ACCOUNTS</p>
+            <h2 id="suppliers-title">Suppliers &amp; Payables</h2>
+            <p className="intro">Record purchases with stock receipts, track supplier payments, and review outstanding balances.</p>
+          </div>
+          <button className="refresh-button" type="button" onClick={() => { void loadSuppliers(); void loadSupplierPurchases(); }} disabled={supplierLoading}>
+            {supplierLoading ? "Loading…" : "↻ Refresh"}
+          </button>
+        </div>
+        {supplierNotice && <p className="inventory-notice" role="status">{supplierNotice}</p>}
+        {supplierError && <p className="notice error" role="alert">{supplierError}</p>}
+        <div className="customer-layout supplier-layout">
+          <div className="customer-detail-column">
+            <section className="data-card customer-list-card" aria-label="Supplier list">
+              <div className="card-heading">
+                <div><h3>Supplier accounts</h3><p>{suppliers.length} saved suppliers</p></div>
+                <span className="count-pill">{suppliers.length}</span>
+              </div>
+              {supplierLoading ? (
+                <p className="card-empty" role="status">Loading suppliers…</p>
+              ) : suppliers.length === 0 ? (
+                <p className="card-empty">No suppliers yet. Add a supplier to record purchases and payables.</p>
+              ) : (
+                <ul className="data-list customer-list">
+                  {suppliers.map((supplier) => (
+                    <li key={supplier.id}>
+                      <button
+                        className={`customer-select${supplier.id === selectedSupplierId ? " customer-selected" : ""}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedSupplierId(supplier.id);
+                          setSupplierPurchaseForm((current) => ({ ...current, supplier_id: supplier.id }));
+                        }}
+                      >
+                        <span><strong>{supplier.name}</strong><small>{supplier.phone || supplier.email || "Contact details not recorded"}</small></span>
+                        <span className="customer-balance">₹{supplier.outstanding_balance}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section className="data-card" aria-labelledby="supplier-form-title">
+              <div className="card-heading"><div><h3 id="supplier-form-title">Add supplier</h3><p>Supplier details are private to this business.</p></div></div>
+              <form className="inventory-form" onSubmit={createSupplier}>
+                <label>Name<input required maxLength={160} value={supplierForm.name} onChange={(event) => setSupplierForm({ ...supplierForm, name: event.target.value })} /></label>
+                <label>Phone (optional)<input maxLength={32} value={supplierForm.phone} onChange={(event) => setSupplierForm({ ...supplierForm, phone: event.target.value })} /></label>
+                <label>Email (optional)<input type="email" maxLength={254} value={supplierForm.email} onChange={(event) => setSupplierForm({ ...supplierForm, email: event.target.value })} /></label>
+                <label>Address (optional)<input maxLength={300} value={supplierForm.address} onChange={(event) => setSupplierForm({ ...supplierForm, address: event.target.value })} /></label>
+                <label>Notes (optional)<input maxLength={500} value={supplierForm.notes} onChange={(event) => setSupplierForm({ ...supplierForm, notes: event.target.value })} /></label>
+                <button className="submit" type="submit" disabled={writing}>{writing ? "Saving…" : "Save supplier"}</button>
+              </form>
+            </section>
+          </div>
+
+          <div className="customer-detail-column">
+            <section className="data-card" aria-labelledby="supplier-purchase-title">
+              <div className="card-heading"><div><h3 id="supplier-purchase-title">Record purchase and receive stock</h3><p>One committed purchase records its payable and stock movements together.</p></div></div>
+              {products.filter((product) => product.active).length === 0 || locations.length === 0 ? (
+                <p className="card-empty">Add an active product and storage location before recording a supplier purchase.</p>
+              ) : (
+                <form className="inventory-form" onSubmit={createSupplierPurchase}>
+                  <label>Supplier<select required value={supplierPurchaseForm.supplier_id} onChange={(event) => {
+                    setSupplierPurchaseForm({ ...supplierPurchaseForm, supplier_id: event.target.value });
+                    setSelectedSupplierId(event.target.value);
+                  }}>
+                    <option value="">Choose a supplier</option>
+                    {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                  </select></label>
+                  <div className="form-row">
+                    <label>Purchase date<input type="date" required value={supplierPurchaseForm.purchase_date} onChange={(event) => setSupplierPurchaseForm({ ...supplierPurchaseForm, purchase_date: event.target.value })} /></label>
+                    <label>Due date (optional)<input type="date" value={supplierPurchaseForm.due_date} onChange={(event) => setSupplierPurchaseForm({ ...supplierPurchaseForm, due_date: event.target.value })} /></label>
+                  </div>
+                  <label>Invoice / reference (optional)<input maxLength={120} value={supplierPurchaseForm.invoice_reference} onChange={(event) => setSupplierPurchaseForm({ ...supplierPurchaseForm, invoice_reference: event.target.value })} /></label>
+                  {supplierPurchaseForm.lines.map((line, index) => (
+                    <div className="supplier-purchase-line" key={index}>
+                      <div className="card-heading">
+                        <strong>Item {index + 1}</strong>
+                        {supplierPurchaseForm.lines.length > 1 && <button className="text-button" type="button" onClick={() => setSupplierPurchaseForm((current) => ({ ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }))}>Remove</button>}
+                      </div>
+                      <label>Product<select required value={line.product_id} onChange={(event) => {
+                        const product = products.find((item) => item.id === event.target.value);
+                        updateSupplierPurchaseLine(index, { product_id: event.target.value, unit: product?.unit ?? "" });
+                      }}>
+                        <option value="">Choose product</option>
+                        {products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name} · {product.unit}</option>)}
+                      </select></label>
+                      <div className="form-row">
+                        <label>Receive at<select required value={line.location_id} onChange={(event) => updateSupplierPurchaseLine(index, { location_id: event.target.value })}>
+                          <option value="">Choose location</option>
+                          {locations.map((location) => <option key={location.id} value={location.id}>{location.full_name}</option>)}
+                        </select></label>
+                        <label>Quantity ({line.unit || "unit"})<input type="number" min="0.001" step="0.001" required value={line.quantity} onChange={(event) => updateSupplierPurchaseLine(index, { quantity: event.target.value })} /></label>
+                      </div>
+                      <label>Purchase price per {line.unit || "unit"} (₹)<input type="number" min="0" step="0.01" required value={line.unit_price} onChange={(event) => updateSupplierPurchaseLine(index, { unit_price: event.target.value })} /></label>
+                    </div>
+                  ))}
+                  <button className="refresh-button" type="button" onClick={() => setSupplierPurchaseForm((current) => ({
+                    ...current,
+                    lines: [...current.lines, { product_id: "", location_id: "", quantity: "", unit: "", unit_price: "" }],
+                  }))}>+ Add another product</button>
+                  <label>Amount paid now (₹)<input type="number" min="0" step="0.01" required value={supplierPurchaseForm.paid_amount} onChange={(event) => setSupplierPurchaseForm({ ...supplierPurchaseForm, paid_amount: event.target.value })} /></label>
+                  <button className="submit" type="submit" disabled={writing || suppliers.length === 0}>{writing ? "Saving…" : "Save purchase and receive stock"}</button>
+                </form>
+              )}
+            </section>
+
+            {selectedSupplierId && (
+              <>
+                <section className="data-card" aria-labelledby="supplier-payment-title">
+                  <div className="card-heading">
+                    <div><h3 id="supplier-payment-title">Record supplier payment</h3><p>Payments reduce payables only; they do not change stock.</p></div>
+                    <span className="customer-balance">₹{suppliers.find((supplier) => supplier.id === selectedSupplierId)?.outstanding_balance ?? "0"} due</span>
+                  </div>
+                  <form className="customer-inline-form" onSubmit={recordSupplierPayment}>
+                    <label>Purchase / invoice<select required value={supplierPaymentForm.purchase_id} onChange={(event) => setSupplierPaymentForm({ ...supplierPaymentForm, purchase_id: event.target.value })}>
+                      <option value="">Choose an outstanding purchase</option>
+                      {supplierPurchases.filter((purchase) => Number(purchase.outstanding_balance) > 0).map((purchase) => (
+                        <option key={purchase.id} value={purchase.id}>{purchase.invoice_reference || purchase.id.slice(0, 8)} · ₹{purchase.outstanding_balance} due</option>
+                      ))}
+                    </select></label>
+                    <label>Amount paid (₹)<input type="number" min="0.01" step="0.01" required value={supplierPaymentForm.amount} onChange={(event) => setSupplierPaymentForm({ ...supplierPaymentForm, amount: event.target.value })} /></label>
+                    <label>Note (optional)<input maxLength={500} value={supplierPaymentForm.note} onChange={(event) => setSupplierPaymentForm({ ...supplierPaymentForm, note: event.target.value })} /></label>
+                    <button className="submit" type="submit" disabled={writing || !supplierPaymentForm.purchase_id}>{writing ? "Saving…" : "Record payment"}</button>
+                  </form>
+                </section>
+                <section className="data-card" aria-labelledby="supplier-history-title">
+                  <div className="card-heading"><div><h3 id="supplier-history-title">Purchase and payment history</h3><p>Recorded transactions for {suppliers.find((supplier) => supplier.id === selectedSupplierId)?.name ?? "this supplier"}.</p></div></div>
+                  {supplierPurchases.length === 0 ? <p className="card-empty">No purchases have been recorded for this supplier.</p> : (
+                    <ul className="data-list supplier-history">
+                      {supplierPurchases.map((purchase) => (
+                        <li key={purchase.id}>
+                          <span>
+                            <strong>{purchase.invoice_reference || "Purchase"} · {new Date(`${purchase.purchase_date}T00:00:00`).toLocaleDateString("en-IN")}</strong>
+                            <small>{purchase.lines.map((line) => `${line.product_name}: ${line.quantity} ${line.unit} at ${line.location_name}`).join(" · ")}</small>
+                            {purchase.due_date && <small>Due {new Date(`${purchase.due_date}T00:00:00`).toLocaleDateString("en-IN")}</small>}
+                            {purchase.payments.map((payment) => <small key={payment.id}>Payment ₹{payment.amount} · {new Date(payment.created_at).toLocaleDateString("en-IN")}{payment.note ? ` · ${payment.note}` : ""}</small>)}
+                          </span>
+                          <span className="supplier-history-amount"><strong>₹{purchase.total_amount}</strong><small>Paid ₹{purchase.paid_amount}</small><small>Due ₹{purchase.outstanding_balance}</small></span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </>
             )}
           </div>
         </div>

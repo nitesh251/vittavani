@@ -27,7 +27,8 @@ def post_receipt(
     quantity: Decimal,
     *,
     note: str | None = None,
-) -> Decimal:
+    reference: str | None = None,
+) -> tuple[Decimal, UUID]:
     location = session.scalar(
         select(Location).where(Location.business_id == business_id, Location.id == location_id)
     )
@@ -52,19 +53,19 @@ def post_receipt(
         session.add(balance)
     else:
         balance.quantity += quantity
-    session.add(
-        StockMovement(
-            business_id=business_id,
-            product_id=product.id,
-            destination_location_id=location_id,
-            movement_type="purchase_receipt",
-            quantity_change=quantity,
-            initiated_by="voice-command",
-            note=note,
-        )
+    movement = StockMovement(
+        business_id=business_id,
+        product_id=product.id,
+        destination_location_id=location_id,
+        movement_type="purchase_receipt",
+        quantity_change=quantity,
+        reference=reference,
+        initiated_by="voice-command",
+        note=note,
     )
+    session.add(movement)
     session.flush()
-    return balance.quantity
+    return balance.quantity, movement.id
 
 
 def post_sale(

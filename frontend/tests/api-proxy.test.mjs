@@ -229,7 +229,7 @@ test("preserves supported stock-history query parameters", async () => {
   assert.equal(forwardedUrl, "http://inventory.local/api/v1/stock-movements?limit=5");
 });
 
-test("forwards customer, ledger, payment, and sales requests with idempotency keys", async () => {
+test("forwards customer, supplier, payable, and sales requests with idempotency keys", async () => {
   const headers = {
     origin: "http://localhost:3000",
     "Idempotency-Key": "customer-operation-1",
@@ -240,16 +240,22 @@ test("forwards customer, ledger, payment, and sales requests with idempotency ke
     return Response.json({ ok: true });
   };
   const customerId = "00000000-0000-0000-0000-000000000001";
+  const supplierId = "00000000-0000-0000-0000-000000000002";
   for (const [path, method] of [
     ["customers", "POST"],
     [`customers/${customerId}/ledger`, "GET"],
     [`customers/${customerId}/payments`, "POST"],
+    ["suppliers", "GET"],
+    ["suppliers", "POST"],
+    [`suppliers/${supplierId}/purchases`, "GET"],
+    [`suppliers/${supplierId}/payments`, "POST"],
+    ["supplier-purchases", "POST"],
     ["sales", "POST"],
   ]) {
     await proxyApiRequest(request(path, method, headers), path.split("/"), development, fetcher);
   }
 
-  assert.equal(forwarded.length, 4);
+  assert.equal(forwarded.length, 9);
   for (const { options } of forwarded) {
     assert.equal(options.headers.get("Idempotency-Key"), "customer-operation-1");
     assert.equal(options.headers.get("X-Dev-Token"), "test-only-token");

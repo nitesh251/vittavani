@@ -1,10 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -192,6 +193,116 @@ class Customer(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+    __table_args__ = (
+        UniqueConstraint("business_id", "id", name="uq_suppliers_business_id"),
+        UniqueConstraint("business_id", "phone", name="uq_supplier_business_phone"),
+        Index("ix_suppliers_business_name", "business_id", "name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(160))
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class SupplierPurchase(Base):
+    __tablename__ = "supplier_purchases"
+    __table_args__ = (
+        UniqueConstraint("business_id", "id", name="uq_supplier_purchases_business_id"),
+        UniqueConstraint("business_id", "id", "supplier_id", name="uq_supplier_purchases_business_supplier"),
+        CheckConstraint("total_amount >= 0", name="ck_supplier_purchase_total_nonnegative"),
+        ForeignKeyConstraint(
+            ["business_id", "supplier_id"],
+            ["suppliers.business_id", "suppliers.id"],
+            ondelete="RESTRICT",
+        ),
+        Index("ix_supplier_purchases_business_supplier_date", "business_id", "supplier_id", "purchase_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    supplier_id: Mapped[UUID]
+    invoice_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    purchase_date: Mapped[date] = mapped_column(Date)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class SupplierPurchaseLine(Base):
+    __tablename__ = "supplier_purchase_lines"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["business_id", "purchase_id"],
+            ["supplier_purchases.business_id", "supplier_purchases.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "product_id"],
+            ["products.business_id", "products.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "location_id"],
+            ["locations.business_id", "locations.id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("quantity > 0", name="ck_supplier_purchase_line_quantity_positive"),
+        CheckConstraint(
+            "unit_price >= 0 AND line_total >= 0",
+            name="ck_supplier_purchase_line_amount_nonnegative",
+        ),
+        Index("ix_supplier_purchase_lines_business_purchase", "business_id", "purchase_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    purchase_id: Mapped[UUID]
+    product_id: Mapped[UUID]
+    location_id: Mapped[UUID]
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+
+
+class SupplierPayment(Base):
+    __tablename__ = "supplier_payments"
+    __table_args__ = (
+        UniqueConstraint("business_id", "id", name="uq_supplier_payments_business_id"),
+        CheckConstraint("amount > 0", name="ck_supplier_payment_amount_positive"),
+        ForeignKeyConstraint(
+            ["business_id", "supplier_id"],
+            ["suppliers.business_id", "suppliers.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["business_id", "purchase_id", "supplier_id"],
+            [
+                "supplier_purchases.business_id",
+                "supplier_purchases.id",
+                "supplier_purchases.supplier_id",
+            ],
+            ondelete="RESTRICT",
+        ),
+        Index("ix_supplier_payments_business_supplier_created", "business_id", "supplier_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    supplier_id: Mapped[UUID]
+    purchase_id: Mapped[UUID]
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
 class Sale(Base):

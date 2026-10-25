@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.ai_service import AIProviderError, extract_product_query
-from app.command_service import CommandIntent, interpret_command
+from app.command_service import CommandIntent, interpret_command, is_action_like_request
 from app.formatting import format_quantity, format_quantity_label
 from app.inventory_metrics import is_low_stock, is_out_of_stock
 from app.main import app
@@ -26,6 +26,9 @@ from app.models import (
     ProductAlias,
     Sale,
     StockMovement,
+    Supplier,
+    SupplierPayment,
+    SupplierPurchase,
 )
 from app.query_service import lookup_product
 
@@ -59,6 +62,29 @@ def test_sale_command_parses_number_words_and_ignores_hypothetical_sales():
     assert command.quantity == Decimal("1")
     assert interpret_command("Can I sell one HP Laptop?") is None
     assert interpret_command("What if I sold one HP Laptop?") is None
+    assert not is_action_like_request("Can I sell one HP Laptop?")
+    assert not is_action_like_request("What if I sold one HP Laptop?")
+
+
+@pytest.mark.parametrize(
+    ("query", "intent", "product", "quantity", "unit"),
+    [
+        ("Add three piece of keyboard in stock.", CommandIntent.RECEIVE_STOCK, "keyboard", Decimal("3"), "piece"),
+        ("Add 3 keyboards to inventory.", CommandIntent.RECEIVE_STOCK, "keyboards", Decimal("3"), None),
+        ("Keyboard ke 3 piece stock mein add karo.", CommandIntent.RECEIVE_STOCK, "keyboard", Decimal("3"), "piece"),
+        ("Maine 3 keyboard kharide hain.", CommandIntent.RECEIVE_STOCK, "keyboard", Decimal("3"), None),
+        ("I sold one HP laptop.", CommandIntent.RECORD_SALE, "hp laptop", Decimal("1"), None),
+    ],
+)
+def test_common_english_and_hinglish_inventory_commands(query, intent, product, quantity, unit):
+    command = interpret_command(query)
+
+    assert command is not None
+    assert command.intent == intent
+    assert command.product_query == product
+    assert command.quantity == quantity
+    assert command.unit == unit
+    assert is_action_like_request(query)
 
 
 @pytest.fixture
@@ -528,6 +554,191 @@ def test_voice_receipt_adds_stock_and_records_movement(client, session):
         StockMovement.business_id == BUSINESS_ID,
         StockMovement.movement_type == "purchase_receipt",
     )) == 1
+
+
+def test_add_to_inventory_phrase_receives_stock_once_with_saved_unit(client, session):
+    headers = {"X-Dev-Token": "local-test-token", "Idempotency-Key": "add-stock-phrase"}
+    payload = {"query": "Add three packets of Amul Butter to stock at Shelf 2", "mode": "normal"}
+
+    response = client.post("/api/v1/ask", headers=headers, json=payload)
+    repeated = client.post("/api/v1/ask", headers=headers, json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "receive_stock"
+    assert response.json()["action_result"]["balance"] == "23.000"
+    movement_id = UUID(response.json()["action_result"]["stock_movement_id"])
+    assert repeated.json()["action_result"]["stock_movement_id"] == str(movement_id)
+    assert session.get(StockMovement, movement_id).movement_type == "purchase_receipt"
+    assert session.scalar(select(InventoryBalance.quantity).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+        InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000012"),
+    )) == Decimal("23.000")
+
+
+def test_ai_mode_routes_action_like_unparsed_commands_to_structured_action(client, session, monkeypatch):
+    from app.command_service import BusinessCommand
+
+    monkeypatch.setattr("app.main.interpret_command", lambda _query: None)
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+    monkeypatch.setattr(
+        "app.main.extract_business_command",
+        lambda _query: BusinessCommand(
+            intent=CommandIntent.RECEIVE_STOCK,
+            product_query="Amul Butter",
+            quantity=Decimal("1"),
+            unit="packet",
+            location_query="Shelf 2",
+        ),
+    )
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token", "Idempotency-Key": "ai-receipt-route"},
+        json={"query": "Add 1 Amul Butter to stock at Shelf 2", "mode": "ai"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "receive_stock"
+    assert session.scalar(select(InventoryBalance.quantity).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+        InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000012"),
+    )) == Decimal("21.000")
+
+
+def test_unknown_stock_receipt_suggests_product_creation_without_mutation(client, session):
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token", "Idempotency-Key": "unknown-receipt"},
+        json={"query": "Add 3 packets of Missing Widget to stock at Shelf 2"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["clarification_required"] is True
+    assert "Would you like to create it" in response.json()["message"]
+    assert session.scalar(select(func.count(StockMovement.id)).where(
+        StockMovement.business_id == BUSINESS_ID,
+        StockMovement.movement_type == "purchase_receipt",
+    )) == 0
+
+
+def test_supplier_purchase_partial_payments_are_atomic_and_idempotent(client, session):
+    headers = {"X-Dev-Token": "local-test-token", "Idempotency-Key": "supplier-create-1"}
+    supplier_payload = {"name": "North Wholesale", "phone": "9876543210", "email": "orders@example.test"}
+    supplier_response = client.post("/api/v1/suppliers", headers=headers, json=supplier_payload)
+    supplier_repeat = client.post("/api/v1/suppliers", headers=headers, json=supplier_payload)
+    assert supplier_response.status_code == 201
+    supplier_id = supplier_response.json()["id"]
+    assert supplier_repeat.json()["id"] == supplier_id
+    assert session.scalar(select(func.count(Supplier.id)).where(Supplier.business_id == BUSINESS_ID)) == 1
+
+    product_id = str(UUID("00000000-0000-0000-0000-000000000020"))
+    shelf_id = str(UUID("00000000-0000-0000-0000-000000000012"))
+    purchase_payload = {
+        "supplier_id": supplier_id,
+        "invoice_reference": "INV-42",
+        "purchase_date": "2026-10-25",
+        "due_date": "2026-11-10",
+        "paid_amount": "10.00",
+        "lines": [
+            {"product_id": product_id, "location_id": shelf_id, "quantity": "2", "unit": "packet", "unit_price": "10.00"},
+            {"product_id": product_id, "location_id": shelf_id, "quantity": "1", "unit": "packet", "unit_price": "15.00"},
+        ],
+    }
+    purchase_headers = {"X-Dev-Token": "local-test-token", "Idempotency-Key": "supplier-purchase-1"}
+    purchase_response = client.post("/api/v1/supplier-purchases", headers=purchase_headers, json=purchase_payload)
+    purchase_repeat = client.post("/api/v1/supplier-purchases", headers=purchase_headers, json=purchase_payload)
+    assert purchase_response.status_code == 201
+    result = purchase_response.json()
+    assert result["total_amount"] == "35.00"
+    assert result["paid_amount"] == "10.00"
+    assert result["outstanding_balance"] == "25.00"
+    assert purchase_repeat.json()["purchase_id"] == result["purchase_id"]
+    assert session.scalar(select(InventoryBalance.quantity).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == UUID(product_id),
+        InventoryBalance.location_id == UUID(shelf_id),
+    )) == Decimal("23.000")
+    assert session.scalar(select(func.count(StockMovement.id)).where(
+        StockMovement.business_id == BUSINESS_ID,
+        StockMovement.movement_type == "purchase_receipt",
+    )) == 2
+    assert session.scalar(select(func.count(SupplierPurchase.id)).where(
+        SupplierPurchase.business_id == BUSINESS_ID,
+    )) == 1
+
+    payment_payload = {"purchase_id": result["purchase_id"], "amount": "5.00", "note": "Bank transfer"}
+    payment_headers = {"X-Dev-Token": "local-test-token", "Idempotency-Key": "supplier-payment-1"}
+    payment_url = f"/api/v1/suppliers/{supplier_id}/payments"
+    payment_response = client.post(payment_url, headers=payment_headers, json=payment_payload)
+    payment_repeat = client.post(payment_url, headers=payment_headers, json=payment_payload)
+    assert payment_response.status_code == 200
+    assert payment_response.json()["purchase_outstanding_balance"] == "20.00"
+    assert payment_response.json()["supplier_outstanding_balance"] == "20.00"
+    assert payment_repeat.json()["payment_id"] == payment_response.json()["payment_id"]
+    assert session.scalar(select(func.count(SupplierPayment.id)).where(
+        SupplierPayment.business_id == BUSINESS_ID,
+    )) == 2
+    assert session.scalar(select(InventoryBalance.quantity).where(
+        InventoryBalance.business_id == BUSINESS_ID,
+        InventoryBalance.product_id == UUID(product_id),
+        InventoryBalance.location_id == UUID(shelf_id),
+    )) == Decimal("23.000")
+
+    suppliers = client.get("/api/v1/suppliers", headers={"X-Dev-Token": "local-test-token"})
+    history = client.get(
+        f"/api/v1/suppliers/{supplier_id}/purchases",
+        headers={"X-Dev-Token": "local-test-token"},
+    )
+    assert suppliers.json()["items"][0]["outstanding_balance"] == "20.00"
+    purchase = history.json()["items"][0]
+    assert purchase["outstanding_balance"] == "20.00"
+    assert len(purchase["lines"]) == 2
+    assert len(purchase["payments"]) == 2
+
+    overpayment = client.post(
+        payment_url,
+        headers={"X-Dev-Token": "local-test-token", "Idempotency-Key": "supplier-overpay"},
+        json={"purchase_id": result["purchase_id"], "amount": "21.00"},
+    )
+    assert overpayment.status_code == 409
+    assert session.scalar(select(func.count(SupplierPayment.id)).where(
+        SupplierPayment.business_id == BUSINESS_ID,
+    )) == 2
+
+
+def test_supplier_purchases_reject_cross_business_products_and_locations(client, session):
+    supplier = Supplier(business_id=BUSINESS_ID, name="Local Supplier")
+    session.add(supplier)
+    session.commit()
+    response = client.post(
+        "/api/v1/supplier-purchases",
+        headers={"X-Dev-Token": "local-test-token", "Idempotency-Key": "cross-tenant-supplier-purchase"},
+        json={
+            "supplier_id": str(supplier.id),
+            "purchase_date": "2026-10-25",
+            "lines": [{
+                "product_id": str(UUID("00000000-0000-0000-0000-000000000021")),
+                "location_id": str(UUID("00000000-0000-0000-0000-000000000030")),
+                "quantity": "1",
+                "unit_price": "10.00",
+            }],
+        },
+    )
+
+    assert response.status_code == 404
+    assert session.scalar(select(func.count(SupplierPurchase.id)).where(
+        SupplierPurchase.business_id == BUSINESS_ID,
+    )) == 0
+    assert session.scalar(select(func.count(StockMovement.id)).where(
+        StockMovement.business_id == BUSINESS_ID,
+        StockMovement.movement_type == "purchase_receipt",
+    )) == 0
+    hidden = client.get(
+        f"/api/v1/suppliers/{UUID('00000000-0000-0000-0000-000000000099')}/purchases",
+        headers={"X-Dev-Token": "local-test-token"},
+    )
+    assert hidden.status_code == 404
 
 
 def test_failed_voice_sale_does_not_change_inventory_or_history(client, session):

@@ -2,7 +2,8 @@ import secrets
 import hashlib
 import json
 from contextlib import contextmanager
-from decimal import Decimal
+from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterator, Literal
 from uuid import UUID
 
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.ai_service import AI_INTENT_MAP, AIProviderError, ai_is_configured, extract_business_command, extract_product_query
 from app.auth import verify_supabase_access_token
 from app.business_actions import customer_balance, post_customer_payment, post_receipt, post_sale
-from app.command_service import BusinessCommand, CommandIntent, interpret_command
+from app.command_service import BusinessCommand, CommandIntent, interpret_command, is_action_like_request
 from app.command_execution import execute_command
 from app.config import settings
 from app.database import get_db
@@ -36,6 +37,10 @@ from app.models import (
     Sale,
     SaleLineItem,
     StockMovement,
+    Supplier,
+    SupplierPayment,
+    SupplierPurchase,
+    SupplierPurchaseLine,
 )
 from app.query_service import lookup_product
 from app.query_understanding import Intent
@@ -140,6 +145,45 @@ class SaleRequest(BaseModel):
 class CustomerPaymentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class SupplierCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=160)
+    phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=254)
+    address: str | None = Field(default=None, max_length=300)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class SupplierPurchaseLineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: UUID
+    location_id: UUID
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+    unit: str | None = Field(default=None, min_length=1, max_length=32)
+    unit_price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+
+
+class SupplierPurchaseCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_id: UUID
+    invoice_reference: str | None = Field(default=None, max_length=120)
+    purchase_date: date
+    due_date: date | None = None
+    paid_amount: Decimal = Field(default=Decimal("0"), ge=0, max_digits=12, decimal_places=2)
+    lines: list[SupplierPurchaseLineRequest] = Field(min_length=1, max_length=50)
+
+
+class SupplierPaymentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purchase_id: UUID
     amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     note: str | None = Field(default=None, max_length=500)
 
@@ -553,7 +597,9 @@ def ask(
                     action_result=action_result,
                 )
     command = interpret_command(body.query)
-    if command is not None:
+    if command is not None or is_action_like_request(body.query):
+        if command is None:
+            command = BusinessCommand(intent=CommandIntent.CLARIFY)
         mutating_intents = {
             CommandIntent.CREATE_CUSTOMER,
             CommandIntent.RECORD_CUSTOMER_PAYMENT,
@@ -565,7 +611,7 @@ def ask(
             CommandIntent.TRANSFER_STOCK,
         }
         needs_ai_details = (
-            command.intent == CommandIntent.CLARIFY
+            command.intent in {CommandIntent.CLARIFY, CommandIntent.UNSUPPORTED}
             or command.intent in {
                 CommandIntent.TRANSFER_STOCK,
                 CommandIntent.RECORD_CREDIT_SALE,
@@ -948,6 +994,417 @@ def receive_customer_payment(
         if saved and saved.payload_hash == payload_hash:
             return saved.response_body
         raise HTTPException(status_code=409, detail="Could not record payment; retry the request") from exc
+    return response
+
+
+def _supplier_purchase_paid(session: Session, business_id: UUID, purchase_id: UUID) -> Decimal:
+    value = session.scalar(
+        select(func.coalesce(func.sum(SupplierPayment.amount), 0)).where(
+            SupplierPayment.business_id == business_id,
+            SupplierPayment.purchase_id == purchase_id,
+        )
+    )
+    return Decimal(str(value or 0))
+
+
+def _supplier_outstanding(session: Session, business_id: UUID, supplier_id: UUID) -> Decimal:
+    purchase_total = session.scalar(
+        select(func.coalesce(func.sum(SupplierPurchase.total_amount), 0)).where(
+            SupplierPurchase.business_id == business_id,
+            SupplierPurchase.supplier_id == supplier_id,
+        )
+    )
+    paid_total = session.scalar(
+        select(func.coalesce(func.sum(SupplierPayment.amount), 0)).where(
+            SupplierPayment.business_id == business_id,
+            SupplierPayment.supplier_id == supplier_id,
+        )
+    )
+    return Decimal(str(purchase_total or 0)) - Decimal(str(paid_total or 0))
+
+
+def _check_idempotency_key(idempotency_key: str | None, operation: str) -> str:
+    if idempotency_key is None:
+        raise HTTPException(status_code=400, detail=f"An Idempotency-Key header is required to {operation}")
+    if not idempotency_key.strip() or len(idempotency_key) > 120:
+        raise HTTPException(status_code=422, detail="Idempotency-Key must contain 1 to 120 characters")
+    return idempotency_key
+
+
+def _saved_command_response(
+    session: Session, business_id: UUID, idempotency_key: str, payload_hash: str
+) -> dict[str, object] | None:
+    saved = session.scalar(
+        select(CommandRequest).where(
+            CommandRequest.business_id == business_id,
+            CommandRequest.idempotency_key == idempotency_key,
+        )
+    )
+    if saved is None:
+        return None
+    if saved.payload_hash != payload_hash:
+        raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+    return saved.response_body
+
+
+@app.get("/api/v1/suppliers")
+def list_suppliers(
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, list[dict[str, object]]]:
+    suppliers = session.scalars(
+        select(Supplier)
+        .where(Supplier.business_id == business_id, Supplier.active.is_(True))
+        .order_by(Supplier.name, Supplier.id)
+    ).all()
+    items = []
+    for supplier in suppliers:
+        purchases = session.scalars(
+            select(SupplierPurchase)
+            .where(
+                SupplierPurchase.business_id == business_id,
+                SupplierPurchase.supplier_id == supplier.id,
+            )
+            .order_by(SupplierPurchase.purchase_date.desc(), SupplierPurchase.id.desc())
+            .limit(5)
+        ).all()
+        items.append(
+            {
+                "id": str(supplier.id),
+                "name": supplier.name,
+                "phone": supplier.phone,
+                "email": supplier.email,
+                "address": supplier.address,
+                "notes": supplier.notes,
+                "outstanding_balance": str(_supplier_outstanding(session, business_id, supplier.id)),
+                "recent_purchases": [
+                    {
+                        "id": str(purchase.id),
+                        "invoice_reference": purchase.invoice_reference,
+                        "purchase_date": purchase.purchase_date.isoformat(),
+                        "total_amount": str(purchase.total_amount),
+                        "paid_amount": str(_supplier_purchase_paid(session, business_id, purchase.id)),
+                    }
+                    for purchase in purchases
+                ],
+            }
+        )
+    return {"items": items}
+
+
+@app.post("/api/v1/suppliers", status_code=status.HTTP_201_CREATED)
+def create_supplier(
+    body: SupplierCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, str | None]:
+    key = _check_idempotency_key(idempotency_key, "create a supplier")
+    payload_hash = hashlib.sha256(
+        json.dumps({"operation": "supplier", "body": body.model_dump(mode="json")}, sort_keys=True).encode()
+    ).hexdigest()
+    saved = _saved_command_response(session, business_id, key, payload_hash)
+    if saved is not None:
+        return saved
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Supplier name cannot be blank")
+    try:
+        with _transaction(session):
+            supplier = Supplier(
+                business_id=business_id,
+                name=name,
+                phone=body.phone.strip() if body.phone and body.phone.strip() else None,
+                email=body.email.strip() if body.email and body.email.strip() else None,
+                address=body.address.strip() if body.address and body.address.strip() else None,
+                notes=body.notes.strip() if body.notes and body.notes.strip() else None,
+            )
+            session.add(supplier)
+            session.flush()
+            response = {"id": str(supplier.id), "name": supplier.name, "phone": supplier.phone}
+            session.add(
+                CommandRequest(
+                    business_id=business_id,
+                    idempotency_key=key,
+                    payload_hash=payload_hash,
+                    response_body=response,
+                )
+            )
+            session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        saved = _saved_command_response(session, business_id, key, payload_hash)
+        if saved is not None:
+            return saved
+        raise HTTPException(status_code=409, detail="Supplier phone number already exists for this business") from exc
+    return response
+
+
+@app.get("/api/v1/suppliers/{supplier_id}/purchases")
+def list_supplier_purchases(
+    supplier_id: UUID,
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, list[dict[str, object]]]:
+    supplier = session.scalar(
+        select(Supplier).where(Supplier.business_id == business_id, Supplier.id == supplier_id)
+    )
+    if supplier is None:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    purchases = session.scalars(
+        select(SupplierPurchase)
+        .where(
+            SupplierPurchase.business_id == business_id,
+            SupplierPurchase.supplier_id == supplier_id,
+        )
+        .order_by(SupplierPurchase.purchase_date.desc(), SupplierPurchase.created_at.desc())
+        .limit(200)
+    ).all()
+    items: list[dict[str, object]] = []
+    for purchase in purchases:
+        line_rows = session.execute(
+            select(SupplierPurchaseLine, Product.name, Product.unit, Location.name)
+            .join(
+                Product,
+                (Product.business_id == SupplierPurchaseLine.business_id)
+                & (Product.id == SupplierPurchaseLine.product_id),
+            )
+            .join(
+                Location,
+                (Location.business_id == SupplierPurchaseLine.business_id)
+                & (Location.id == SupplierPurchaseLine.location_id),
+            )
+            .where(
+                SupplierPurchaseLine.business_id == business_id,
+                SupplierPurchaseLine.purchase_id == purchase.id,
+            )
+        ).all()
+        payments = session.scalars(
+            select(SupplierPayment)
+            .where(
+                SupplierPayment.business_id == business_id,
+                SupplierPayment.purchase_id == purchase.id,
+            )
+            .order_by(SupplierPayment.created_at, SupplierPayment.id)
+        ).all()
+        paid = sum((payment.amount for payment in payments), Decimal("0"))
+        items.append(
+            {
+                "id": str(purchase.id),
+                "invoice_reference": purchase.invoice_reference,
+                "purchase_date": purchase.purchase_date.isoformat(),
+                "due_date": purchase.due_date.isoformat() if purchase.due_date else None,
+                "total_amount": str(purchase.total_amount),
+                "paid_amount": str(paid),
+                "outstanding_balance": str(purchase.total_amount - paid),
+                "lines": [
+                    {
+                        "product_id": str(line.product_id),
+                        "product_name": product_name,
+                        "location_id": str(line.location_id),
+                        "location_name": location_name,
+                        "quantity": str(line.quantity),
+                        "unit": unit,
+                        "unit_price": str(line.unit_price),
+                        "line_total": str(line.line_total),
+                    }
+                    for line, product_name, unit, location_name in line_rows
+                ],
+                "payments": [
+                    {
+                        "id": str(payment.id),
+                        "amount": str(payment.amount),
+                        "note": payment.note,
+                        "created_at": payment.created_at.isoformat(),
+                    }
+                    for payment in payments
+                ],
+            }
+        )
+    return {"items": items}
+
+
+@app.post("/api/v1/supplier-purchases", status_code=status.HTTP_201_CREATED)
+def create_supplier_purchase(
+    body: SupplierPurchaseCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, str]:
+    key = _check_idempotency_key(idempotency_key, "record a supplier purchase")
+    payload_hash = hashlib.sha256(
+        json.dumps({"operation": "supplier_purchase", "body": body.model_dump(mode="json")}, sort_keys=True).encode()
+    ).hexdigest()
+    saved = _saved_command_response(session, business_id, key, payload_hash)
+    if saved is not None:
+        return saved
+
+    try:
+        with _transaction(session):
+            supplier = session.scalar(
+                select(Supplier)
+                .where(
+                    Supplier.business_id == business_id,
+                    Supplier.id == body.supplier_id,
+                    Supplier.active.is_(True),
+                )
+                .with_for_update()
+            )
+            if supplier is None:
+                raise HTTPException(status_code=404, detail="Supplier not found")
+
+            products: dict[UUID, Product] = {}
+            for product_id in sorted({line.product_id for line in body.lines}, key=str):
+                product = _require_active_product(session, business_id, product_id)
+                products[product_id] = product
+            total = Decimal("0")
+            line_totals = []
+            for line in body.lines:
+                product = products[line.product_id]
+                _validate_unit(product, line.unit)
+                _require_location(session, business_id, line.location_id)
+                line_total = (line.quantity * line.unit_price).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                total += line_total
+                line_totals.append(line_total)
+            total = total.quantize(Decimal("0.01"))
+            if body.paid_amount > total:
+                raise HTTPException(status_code=422, detail="Payment cannot exceed the purchase total")
+
+            purchase = SupplierPurchase(
+                business_id=business_id,
+                supplier_id=supplier.id,
+                invoice_reference=body.invoice_reference.strip() if body.invoice_reference else None,
+                purchase_date=body.purchase_date,
+                due_date=body.due_date,
+                total_amount=total,
+            )
+            session.add(purchase)
+            session.flush()
+            for line, line_total in zip(body.lines, line_totals, strict=True):
+                product = products[line.product_id]
+                post_receipt(
+                    session,
+                    business_id,
+                    product,
+                    line.location_id,
+                    line.quantity,
+                    note=f"Supplier purchase {purchase.invoice_reference or purchase.id}",
+                    reference=f"purchase:{purchase.id}",
+                )
+                session.add(
+                    SupplierPurchaseLine(
+                        business_id=business_id,
+                        purchase_id=purchase.id,
+                        product_id=product.id,
+                        location_id=line.location_id,
+                        quantity=line.quantity,
+                        unit_price=line.unit_price,
+                        line_total=line_total,
+                    )
+                )
+            if body.paid_amount > 0:
+                session.add(
+                    SupplierPayment(
+                        business_id=business_id,
+                        supplier_id=supplier.id,
+                        purchase_id=purchase.id,
+                        amount=body.paid_amount,
+                        note="Payment recorded with purchase",
+                    )
+                )
+            response = {
+                "purchase_id": str(purchase.id),
+                "supplier_id": str(supplier.id),
+                "total_amount": str(total),
+                "paid_amount": str(body.paid_amount),
+                "outstanding_balance": str(total - body.paid_amount),
+                "message": f"Purchase recorded for {supplier.name}; inventory and payable updated.",
+            }
+            session.add(
+                CommandRequest(
+                    business_id=business_id,
+                    idempotency_key=key,
+                    payload_hash=payload_hash,
+                    response_body=response,
+                )
+            )
+            session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        saved = _saved_command_response(session, business_id, key, payload_hash)
+        if saved is not None:
+            return saved
+        raise HTTPException(status_code=409, detail="Could not record purchase; refresh and retry") from exc
+    return response
+
+
+@app.post("/api/v1/suppliers/{supplier_id}/payments")
+def record_supplier_payment(
+    supplier_id: UUID,
+    body: SupplierPaymentCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    business_id: UUID = Depends(development_business_id),
+    session: Session = Depends(get_db),
+) -> dict[str, str]:
+    key = _check_idempotency_key(idempotency_key, "record a supplier payment")
+    payload_hash = hashlib.sha256(
+        json.dumps(
+            {"operation": "supplier_payment", "supplier_id": str(supplier_id), "body": body.model_dump(mode="json")},
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    saved = _saved_command_response(session, business_id, key, payload_hash)
+    if saved is not None:
+        return saved
+    try:
+        with _transaction(session):
+            purchase = session.scalar(
+                select(SupplierPurchase)
+                .where(
+                    SupplierPurchase.business_id == business_id,
+                    SupplierPurchase.supplier_id == supplier_id,
+                    SupplierPurchase.id == body.purchase_id,
+                )
+                .with_for_update()
+            )
+            if purchase is None:
+                raise HTTPException(status_code=404, detail="Supplier purchase not found")
+            outstanding = purchase.total_amount - _supplier_purchase_paid(session, business_id, purchase.id)
+            if body.amount > outstanding:
+                raise HTTPException(status_code=409, detail="Payment cannot exceed this purchase's outstanding balance")
+            payment = SupplierPayment(
+                business_id=business_id,
+                supplier_id=supplier_id,
+                purchase_id=purchase.id,
+                amount=body.amount,
+                note=body.note,
+            )
+            session.add(payment)
+            session.flush()
+            response = {
+                "payment_id": str(payment.id),
+                "purchase_id": str(purchase.id),
+                "amount": str(body.amount),
+                "purchase_outstanding_balance": str(outstanding - body.amount),
+                "supplier_outstanding_balance": str(_supplier_outstanding(session, business_id, supplier_id)),
+            }
+            session.add(
+                CommandRequest(
+                    business_id=business_id,
+                    idempotency_key=key,
+                    payload_hash=payload_hash,
+                    response_body=response,
+                )
+            )
+            session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        saved = _saved_command_response(session, business_id, key, payload_hash)
+        if saved is not None:
+            return saved
+        raise HTTPException(status_code=409, detail="Could not record supplier payment; retry the request") from exc
     return response
 
 
