@@ -156,6 +156,7 @@ def test_sales_overview_and_question_answer_handle_no_recorded_sales(session: Se
         ("Sales trend this week", "trend"),
         ("How much were sales last week?", "last_week"),
         ("Which products sold the most last week?", "last_week_top_products"),
+        ("What products did we sell last week?", "last_week_top_products"),
         ("How is my business doing?", "trend"),
         ("Which products sold the most this week?", "top_products"),
         ("Aaj ki bikri kitni hai?", "today"),
@@ -284,6 +285,13 @@ def test_last_week_questions_use_previous_local_calendar_week(session: Session):
         "How much were sales last week?",
         now=datetime(2026, 10, 24, 0, 30, tzinfo=UTC),
     )
+    product_answer = answer_business_question(
+        session,
+        business.id,
+        business.timezone,
+        "What products did we sell last week?",
+        now=datetime(2026, 10, 24, 0, 30, tzinfo=UTC),
+    )
 
     assert report["period_start"] == "2026-10-12"
     assert report["period_end"] == "2026-10-18"
@@ -291,3 +299,6 @@ def test_last_week_questions_use_previous_local_calendar_week(session: Session):
     assert report["sale_count"] == 1
     assert answer is not None
     assert "2026-10-12 to 2026-10-18" in answer[0]
+    assert product_answer is not None
+    assert "Top products by recorded quantity last week" in product_answer[0]
+    assert "Tea: 2 packet" in product_answer[0]
