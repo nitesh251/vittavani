@@ -1176,7 +1176,7 @@ export default function Home() {
             <span>Your catalogue has products, but none are active for dashboard stock totals. Edit a product below to activate it.</span>
           </div>
         )}
-        {!dashboardLoading && !dashboardError && dashboard && (dashboard.product_count > 0 || (!inventoryLoading && !inventoryError && products.length > 0)) && (
+        {!dashboardLoading && !dashboardError && dashboard && (
           <>
             <div className="inventory-glance-heading">
               <h2>Inventory at a glance</h2>
