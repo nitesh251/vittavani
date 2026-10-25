@@ -7,10 +7,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.database import Base
+from app.main import AskRequest, ask, dashboard
 from app.models import (
     Business,
     Customer,
     CustomerLedgerEntry,
+    InventoryBalance,
     Location,
     Product,
     Sale,
@@ -19,6 +21,7 @@ from app.models import (
 from app.sales_analytics import (
     answer_business_question,
     classify_business_question,
+    previous_calendar_week_sales,
     sales_overview,
 )
 
@@ -149,7 +152,11 @@ def test_sales_overview_and_question_answer_handle_no_recorded_sales(session: Se
     ("question", "intent"),
     [
         ("How much were sales today?", "today"),
+        ("How many units were sold today?", "today"),
         ("Sales trend this week", "trend"),
+        ("How much were sales last week?", "last_week"),
+        ("Which products sold the most last week?", "last_week_top_products"),
+        ("How is my business doing?", "trend"),
         ("Which products sold the most this week?", "top_products"),
         ("Aaj ki bikri kitni hai?", "today"),
         ("Sabse zyada bikne wale products kaun se hain?", "top_products"),
@@ -164,3 +171,123 @@ def test_business_question_classification(question: str, intent: str):
 def test_business_question_classifier_does_not_capture_mutations():
     assert classify_business_question("Receive 5 packets of Amul Butter") is None
     assert classify_business_question("5 Amul Butter bik gaya") is None
+    assert classify_business_question("5 packets Amul Butter sold today") is None
+
+
+def test_dashboard_and_ask_endpoints_return_verified_sales_data(session: Session):
+    business = Business(id=uuid4(), name="Shop", timezone="Asia/Kolkata")
+    session.add(business)
+    session.flush()
+
+    dashboard_result = dashboard(business_id=business.id, session=session)
+    answer = ask(
+        AskRequest(query="Which products sold the most this week?", mode="ai"),
+        idempotency_key=None,
+        business_id=business.id,
+        session=session,
+    )
+
+    assert dashboard_result.sales_overview.today.total_amount == "0.00"
+    assert len(dashboard_result.sales_overview.trend) == 7
+    assert answer.intent == "business_insight"
+    assert "not enough data" in answer.message
+    assert answer.provider is None
+
+
+def test_restock_answer_uses_current_stock_and_recent_sales_velocity(session: Session):
+    business = Business(id=uuid4(), name="Shop", timezone="Asia/Kolkata")
+    session.add(business)
+    session.flush()
+    location = Location(id=uuid4(), business_id=business.id, name="Shop")
+    product = Product(
+        id=uuid4(),
+        business_id=business.id,
+        name="Tea",
+        unit="packet",
+        minimum_stock=Decimal("5"),
+    )
+    session.add_all([location, product])
+    session.flush()
+    session.add(
+        InventoryBalance(
+            id=uuid4(),
+            business_id=business.id,
+            product_id=product.id,
+            location_id=location.id,
+            quantity=Decimal("10"),
+        )
+    )
+    now = datetime(2026, 10, 24, 0, 30, tzinfo=UTC)
+    record_sale(
+        session,
+        business.id,
+        product.id,
+        location.id,
+        datetime(2026, 10, 23, 12, 0, tzinfo=UTC),
+        total="600.00",
+        quantity="60",
+    )
+    session.flush()
+
+    answer = answer_business_question(
+        session,
+        business.id,
+        business.timezone,
+        "What should I restock?",
+        now=now,
+    )
+
+    assert answer is not None
+    assert answer[1]["restock_candidates"][0]["name"] == "Tea"
+    assert answer[1]["restock_candidates"][0]["coverage_days"] == "5.0"
+    assert "not a forecast" in answer[0]
+
+
+def test_last_week_questions_use_previous_local_calendar_week(session: Session):
+    business = Business(id=uuid4(), name="Shop", timezone="Asia/Kolkata")
+    session.add(business)
+    session.flush()
+    location = Location(id=uuid4(), business_id=business.id, name="Shop")
+    product = Product(id=uuid4(), business_id=business.id, name="Tea", unit="packet")
+    session.add_all([location, product])
+    session.flush()
+    record_sale(
+        session,
+        business.id,
+        product.id,
+        location.id,
+        datetime(2026, 10, 18, 18, 29, tzinfo=UTC),
+        total="10.00",
+        quantity="2",
+    )
+    record_sale(
+        session,
+        business.id,
+        product.id,
+        location.id,
+        datetime(2026, 10, 19, 18, 30, tzinfo=UTC),
+        total="20.00",
+        quantity="4",
+    )
+    session.flush()
+
+    report = previous_calendar_week_sales(
+        session,
+        business.id,
+        business.timezone,
+        now=datetime(2026, 10, 24, 0, 30, tzinfo=UTC),
+    )
+    answer = answer_business_question(
+        session,
+        business.id,
+        business.timezone,
+        "How much were sales last week?",
+        now=datetime(2026, 10, 24, 0, 30, tzinfo=UTC),
+    )
+
+    assert report["period_start"] == "2026-10-12"
+    assert report["period_end"] == "2026-10-18"
+    assert report["total_amount"] == "10.00"
+    assert report["sale_count"] == 1
+    assert answer is not None
+    assert "2026-10-12 to 2026-10-18" in answer[0]

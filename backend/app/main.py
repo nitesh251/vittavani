@@ -39,6 +39,7 @@ from app.models import (
 )
 from app.query_service import lookup_product
 from app.query_understanding import Intent
+from app.sales_analytics import answer_business_question, classify_business_question, sales_overview
 
 app = FastAPI(title="Vittavani API", version="0.1.0")
 app.add_middleware(
@@ -325,6 +326,46 @@ class DashboardActivity(BaseModel):
     created_at: str
 
 
+class SalesQuantityByUnit(BaseModel):
+    unit: str
+    quantity: str
+
+
+class SalesTrendDay(BaseModel):
+    date: str
+    total_amount: str
+    sale_count: int
+    quantity_by_unit: list[SalesQuantityByUnit]
+
+
+class SalesProduct(BaseModel):
+    product_id: str
+    name: str
+    quantity: str
+    unit: str
+
+
+class SalesPeriod(BaseModel):
+    total_amount: str
+    sale_count: int
+
+
+class SalesToday(SalesPeriod):
+    quantity_by_unit: list[SalesQuantityByUnit]
+
+
+class SalesOverview(BaseModel):
+    currency: str
+    timezone: str
+    today: SalesToday
+    trend: list[SalesTrendDay]
+    top_products: list[SalesProduct]
+    previous_period: SalesPeriod
+    current_period: SalesPeriod
+    pending_customer_balances: str
+    sales_status_note: str
+
+
 class DashboardResponse(BaseModel):
     product_count: int
     total_stock_units: str | None
@@ -334,6 +375,7 @@ class DashboardResponse(BaseModel):
     low_stock_products: list[DashboardProduct]
     stock_by_location: list[DashboardLocation]
     recent_stock_activity: list[DashboardActivity]
+    sales_overview: SalesOverview
 
 
 @app.get("/health")
@@ -489,6 +531,27 @@ def ask(
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> AskResponse:
+    if classify_business_question(body.query) is not None:
+        business = session.get(Business, business_id)
+        if business is not None:
+            insight = answer_business_question(
+                session,
+                business_id,
+                business.timezone,
+                body.query,
+            )
+            if insight is not None:
+                message, action_result = insight
+                return AskResponse(
+                    intent="business_insight",
+                    original_query=body.query,
+                    locations=[],
+                    candidates=[],
+                    clarification_required=False,
+                    message=message,
+                    mode=body.mode,
+                    action_result=action_result,
+                )
     command = interpret_command(body.query)
     if command is not None:
         mutating_intents = {
@@ -1024,6 +1087,9 @@ def dashboard(
     business_id: UUID = Depends(development_business_id),
     session: Session = Depends(get_db),
 ) -> DashboardResponse:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Business not found")
     totals = inventory_totals_subquery(business_id)
     products = session.execute(
         select(
@@ -1166,6 +1232,7 @@ def dashboard(
         low_stock_products=low_stock,
         stock_by_location=locations,
         recent_stock_activity=activity,
+        sales_overview=sales_overview(session, business_id, business.timezone),
     )
 
 

@@ -38,6 +38,21 @@ type Dashboard = {
     destination_location: string | null;
     created_at: string;
   }[];
+  sales_overview: SalesOverview;
+};
+
+type SalesQuantity = { unit: string; quantity: string };
+type SalesPeriod = { total_amount: string; sale_count: number };
+type SalesOverview = {
+  currency: string;
+  timezone: string;
+  today: SalesPeriod & { quantity_by_unit: SalesQuantity[] };
+  trend: (SalesPeriod & { date: string; quantity_by_unit: SalesQuantity[] })[];
+  top_products: { product_id: string; name: string; quantity: string; unit: string }[];
+  previous_period: SalesPeriod;
+  current_period: SalesPeriod;
+  pending_customer_balances: string;
+  sales_status_note: string;
 };
 
 type StockMovement = {
@@ -128,6 +143,9 @@ const examples = [
   "Amul butter kahan rakha hai?",
   "अमूल बटर कितना बचा है?",
   "Show my low-stock products.",
+  "How much were sales today?",
+  "Which products sold the most this week?",
+  "What should I restock?",
 ];
 const stockStatusLabels = {
   in_stock: "In stock",
@@ -202,6 +220,20 @@ function productDetails(product: InventoryProduct, locationNames: Map<string, st
   ].filter(Boolean).join(" · ");
 }
 
+function formatCurrency(amount: string, currency: string) {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return `${currency} ${amount}`;
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${currency} ${amount}`;
+  }
+}
+
 function Metric({
   label,
   value,
@@ -264,6 +296,7 @@ export default function Home() {
   const [clockNow, setClockNow] = useState(() => new Date());
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
+  const businessProfileUserIdRef = useRef<string | null>(null);
   const [productSearch, setProductSearch] = useState("");
   const [productStatusFilter, setProductStatusFilter] = useState("all");
   const [productSort, setProductSort] = useState("name");
@@ -461,10 +494,15 @@ export default function Home() {
       setProfileUser(user);
       setProfileMenuOpen(false);
       if (!user) {
+        businessProfileUserIdRef.current = null;
         setBusinessProfile(null);
         return;
       }
-      void loadBusinessProfile();
+      const userKey = user.id ?? user.email ?? "authenticated-user";
+      if (businessProfileUserIdRef.current !== userKey) {
+        businessProfileUserIdRef.current = userKey;
+        void loadBusinessProfile();
+      }
     };
     void client.auth.getSession().then(({ data }) => {
       if (active) applySessionUser(data.session?.user ?? null);
@@ -910,10 +948,16 @@ export default function Home() {
   const aiStatusMessage = useMemo(() => aiStatusError
     ? aiStatusError
     : aiConfigured
-      ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Stock facts are still fetched from your inventory.`
+      ? `AI query interpretation is available via ${aiProvider} · ${aiModel}. Verified sales and stock facts come from your saved business records.`
       : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search.",
   [aiStatusError, aiConfigured, aiProvider, aiModel]);
   const activeProductCount = useMemo(() => products.filter((product) => product.active).length, [products]);
+  const salesOverview = dashboard?.sales_overview;
+  const maxDailySales = Math.max(
+    0,
+    ...(salesOverview?.trend ?? []).map((day) => Number(day.total_amount)),
+  );
+  const recentSalesExist = Boolean(salesOverview?.trend.some((day) => day.sale_count > 0));
   const profileName = getDisplayName(profileUser);
   const profileEmail = profileUser?.email?.trim() ?? "";
   const profileImageUrl = getProfileImageUrl(profileUser);
@@ -1248,6 +1292,71 @@ export default function Home() {
               )}
             </section>
           </>
+        )}
+        {!dashboardLoading && !dashboardError && salesOverview && (
+          <section className="data-card sales-overview" aria-labelledby="sales-overview-title">
+            <div className="card-heading">
+              <div>
+                <h2 id="sales-overview-title">Sales overview</h2>
+                <p>Recorded sales in {salesOverview.timezone} · today and the last 7 days</p>
+              </div>
+              <a className="view-all-link" href="#sales" onClick={() => setActiveSection("sales")}>Sales history <span aria-hidden="true">→</span></a>
+            </div>
+            <div className="sales-summary-grid">
+              <article><span>Sales today</span><strong>{formatCurrency(salesOverview.today.total_amount, salesOverview.currency)}</strong></article>
+              <article>
+                <span>Quantity sold today</span>
+                <strong>
+                  {salesOverview.today.quantity_by_unit.length
+                    ? salesOverview.today.quantity_by_unit.map((item) => `${item.quantity} ${item.unit}`).join(" · ")
+                    : "0"}
+                </strong>
+              </article>
+              <article><span>Sales recorded today</span><strong>{salesOverview.today.sale_count}</strong></article>
+              <article><span>Pending customer balances</span><strong>{formatCurrency(salesOverview.pending_customer_balances, salesOverview.currency)}</strong></article>
+            </div>
+            {!recentSalesExist && (
+              <p className="sales-empty-state">No sales were recorded in the last 7 days. Record sales to see trends and top-selling products here.</p>
+            )}
+            <div className="sales-detail-grid">
+              <div>
+                <h3>Sales trend</h3>
+                <p className="sales-period-comparison">
+                  Last 7 days: {formatCurrency(salesOverview.current_period.total_amount, salesOverview.currency)}
+                  {" · "}previous 7 days: {formatCurrency(salesOverview.previous_period.total_amount, salesOverview.currency)}
+                </p>
+                <ol className="sales-trend" aria-label="Daily sales for the last 7 days">
+                  {salesOverview.trend.map((day) => {
+                    const amount = Number(day.total_amount);
+                    const height = maxDailySales > 0 ? Math.max(4, amount / maxDailySales * 100) : 0;
+                    return (
+                      <li key={day.date} aria-label={`${day.date}: ${formatCurrency(day.total_amount, salesOverview.currency)}; ${day.sale_count} sales`}>
+                        <span className="sales-trend-amount">{formatCurrency(day.total_amount, salesOverview.currency)}</span>
+                        <span className="sales-trend-track"><span style={{ height: `${height}%` }} /></span>
+                        <time dateTime={day.date}>{day.date.slice(5)}</time>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+              <div>
+                <h3>Top-selling products · 7 days</h3>
+                {salesOverview.top_products.length === 0 ? (
+                  <p className="card-empty">No product sales to rank yet.</p>
+                ) : (
+                  <ol className="data-list sales-top-products">
+                    {salesOverview.top_products.map((product) => (
+                      <li key={product.product_id}>
+                        <strong>{product.name}</strong>
+                        <span className="stock-quantity">{product.quantity} {product.unit}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            </div>
+            <p className="sales-data-note">{salesOverview.sales_status_note}</p>
+          </section>
         )}
       </section>
 
@@ -1619,7 +1728,7 @@ export default function Home() {
         </div>
         <p className={`ai-status${assistantMode === "ai" && !aiConfigured ? " ai-unavailable" : ""}`} role="status">
           {assistantMode === "normal"
-              ? "Normal Search uses deterministic product and alias matching; no AI service is required."
+              ? "Normal Search uses deterministic product, alias, and saved sales lookups; no AI service is required."
               : aiStatusMessage}
         </p>
         <form className="ask-card" onSubmit={submit}>

@@ -252,12 +252,107 @@ def restock_candidates(
     ]
 
 
+def previous_calendar_week_sales(
+    session: Session,
+    business_id: UUID,
+    timezone_name: str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    zone = _business_zone(timezone_name)
+    today = (now or datetime.now(UTC)).astimezone(zone).date()
+    this_week_start = today - timedelta(days=today.weekday())
+    start_day = this_week_start - timedelta(days=7)
+    end_day = this_week_start
+    start_at = datetime.combine(start_day, time.min, tzinfo=zone).astimezone(UTC)
+    end_at = datetime.combine(end_day, time.min, tzinfo=zone).astimezone(UTC)
+    sales = session.scalars(
+        select(Sale).where(
+            Sale.business_id == business_id,
+            Sale.created_at >= start_at,
+            Sale.created_at < end_at,
+        )
+    ).all()
+    quantities: dict[tuple[UUID, str, str], Decimal] = {}
+    if sales:
+        lines = session.execute(
+            select(SaleLineItem, Product.name, Product.unit)
+            .join(
+                Sale,
+                (Sale.business_id == SaleLineItem.business_id)
+                & (Sale.id == SaleLineItem.sale_id),
+            )
+            .join(
+                Product,
+                (Product.business_id == SaleLineItem.business_id)
+                & (Product.id == SaleLineItem.product_id),
+            )
+            .where(
+                SaleLineItem.business_id == business_id,
+                SaleLineItem.sale_id.in_([sale.id for sale in sales]),
+            )
+        ).all()
+        for line, product_name, unit in lines:
+            key = (line.product_id, product_name, unit)
+            quantities[key] = quantities.get(key, _ZERO) + line.quantity
+    top_products = [
+        {
+            "product_id": str(product_id),
+            "name": name,
+            "quantity": format_quantity(quantity),
+            "unit": unit,
+        }
+        for (product_id, name, unit), quantity in sorted(
+            quantities.items(),
+            key=lambda item: (-item[1], item[0][1].casefold()),
+        )[:5]
+    ]
+    business = session.get(Business, business_id)
+    return {
+        "period_start": start_day.isoformat(),
+        "period_end": (end_day - timedelta(days=1)).isoformat(),
+        "currency": business.currency if business else "INR",
+        "total_amount": str(
+            sum((sale.total_amount for sale in sales), _ZERO).quantize(
+                _MONEY,
+                rounding=ROUND_HALF_UP,
+            )
+        ),
+        "sale_count": len(sales),
+        "top_products": top_products,
+    }
+
+
 def classify_business_question(question: str) -> str | None:
     text = " ".join(question.casefold().split())
+    question_prefixes = (
+        "how ",
+        "what ",
+        "which ",
+        "show ",
+        "list ",
+        "tell me ",
+        "did ",
+        "aaj ",
+        "आज ",
+        "कितने ",
+        "कितनी ",
+        "कितना ",
+        "कौन ",
+    )
+    is_question = text.startswith(question_prefixes) or text.endswith("?")
+    top_question = any(word in text for word in ("top selling", "top-selling", "best selling", "most sold", "sold the most", "sabse zyada", "सबसे ज़्यादा"))
+    if top_question and any(text.startswith(prefix) for prefix in ("which ", "what ", "show ", "list ", "top ", "kaun", "कौन")):
+        return "last_week_top_products" if "last week" in text else "top_products"
+    product_sales_question = (
+        any(text.startswith(prefix) for prefix in ("which products", "what products", "show products", "list products", "कौन से उत्पाद"))
+        and any(verb in text for verb in ("sell", "sold", "sale", "बिक"))
+    )
+    if product_sales_question and "last week" in text:
+        return "last_week_top_products"
     mutation = (
         "record sale",
         "sell ",
-        "sell the",
         "create ",
         "add ",
         "receive ",
@@ -272,20 +367,33 @@ def classify_business_question(question: str) -> str | None:
         "stock add",
         "stock receive",
     )
-    if any(phrase in text for phrase in mutation):
+    if any(phrase in text for phrase in mutation if phrase != "sell ") or (
+        "sell " in text and not is_question
+    ):
         return None
+    if "sold " in text and not is_question:
+        return None
+    is_last_week = "last week" in text
+    if is_last_week and (
+        top_question
+        or product_sales_question
+        or any(word in text for word in ("sales", "sale", "revenue", "bikri", "बिक्री"))
+    ):
+        return "last_week_top_products" if top_question or product_sales_question else "last_week"
     if any(word in text for word in ("restock", "replenish", "what should i order", "kya mangaye", "stock bhar")):
         return "restock"
-    if any(word in text for word in ("improve sales", "increase sales", "grow sales", "sales badha", "bikri badha", "बिक्री बढ़")):
+    if any(word in text for word in ("improve sales", "increase sales", "grow sales", "boost sales", "sales badha", "bikri badha", "बिक्री बढ़")):
         return "improve"
-    if any(word in text for word in ("top selling", "top-selling", "best selling", "most sold", "sold the most", "sabse zyada", "सबसे ज़्यादा")):
-        return "top_products"
-    if any(word in text for word in ("why sales drop", "sales drop", "sales dropped", "sales down", "sales decline", "sales trend", "sales compare", "sales performance", "bikri kam", "बिक्री कम", "girawat")):
+    if any(word in text for word in ("why sales drop", "sales drop", "sales dropped", "sales down", "sales decline", "sales trend", "sales compare", "sales performance", "business performance", "how is my business doing", "bikri kam", "बिक्री कम", "girawat")):
         return "trend"
-    has_sales = any(word in text for word in ("sales", "sale", "revenue", "bikri", "बिक्री"))
+    has_sales = any(word in text for word in ("sales", "sale", "revenue", "bikri", "बिक्री")) or (
+        is_question and any(word in text for word in ("sold ", "sell "))
+    )
     has_period = any(word in text for word in ("today", "aaj", "आज", "this week", "last week", "week", "recent"))
     if has_sales and has_period:
         return "trend" if any(word in text for word in ("week", "recent", "trend", "compare")) else "today"
+    if top_question or product_sales_question:
+        return "top_products"
     return None
 
 
@@ -300,6 +408,29 @@ def answer_business_question(
     intent = classify_business_question(question)
     if intent is None:
         return None
+    if intent in {"last_week", "last_week_top_products"}:
+        report = previous_calendar_week_sales(session, business_id, timezone_name, now=now)
+        period = f'{report["period_start"]} to {report["period_end"]} ({timezone_name})'
+        if report["sale_count"] == 0:
+            message = f"There are no recorded sales for the last local calendar week ({period})."
+        elif intent == "last_week_top_products":
+            products = report["top_products"]
+            ranked = "; ".join(
+                f'{index}. {item["name"]}: {item["quantity"]} {item["unit"]}'
+                for index, item in enumerate(products, 1)
+            )
+            message = (
+                f"Top products by recorded quantity last week ({period}): {ranked}."
+                if ranked
+                else f"No product quantities were recorded for last week ({period})."
+            )
+        else:
+            message = (
+                f'Recorded sales last local calendar week ({period}) totaled '
+                f'{report["currency"]} '
+                f'{report["total_amount"]} across {report["sale_count"]} sale(s).'
+            )
+        return message, {"intent": intent, **report}
     overview = sales_overview(session, business_id, timezone_name, now=now)
     currency = overview["currency"]
     today = overview["today"]
