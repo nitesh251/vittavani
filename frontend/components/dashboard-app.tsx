@@ -1319,7 +1319,7 @@ export default function Home() {
             <div className="sales-summary-grid">
               <article className="sales-kpi-blue"><span>Sales today</span><strong>{formatCurrency(salesOverview.today.total_amount, salesOverview.currency)}</strong></article>
               <article className="sales-kpi-cyan">
-                <span>Quantity sold today</span>
+                <span>Items sold today</span>
                 <strong>
                   {salesOverview.today.quantity_by_unit.length
                     ? salesOverview.today.quantity_by_unit.map((item) => `${item.quantity} ${item.unit}`).join(" · ")
