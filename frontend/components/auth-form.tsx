@@ -75,7 +75,6 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           <span className="brand-mark" aria-hidden="true">வி</span>
           Vittavani
         </Link>
-        <p className="public-eyebrow">{isSignup ? "START YOUR WORKSPACE" : "WELCOME BACK"}</p>
         <h1 id="auth-title">{isSignup ? "Create your account" : "Welcome back to Vittavani"}</h1>
         <p className="auth-description">
           {isSignup ? "Sign up as a business owner. You’ll create your business workspace next." : "Sign in to manage your business."}
