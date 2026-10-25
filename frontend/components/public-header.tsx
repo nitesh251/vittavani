@@ -40,7 +40,7 @@ export function PublicHeader({ variant = "home" }: PublicHeaderProps) {
             className={variant === "login" ? "button button-primary" : "public-login-link"}
             href={authHref}
           >
-            {variant === "home" ? "Get Started" : authLabel}
+            {authLabel}
           </Link>
         )}
       </div>
