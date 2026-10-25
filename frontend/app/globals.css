@@ -246,6 +246,15 @@ h1 { margin: 0; font-size: clamp(27px, 2.3vw, 34px); font-weight: 750; }
 .business-context strong, .business-context small { display: block; }
 .business-context strong { font-size: 12px; }
 .business-context small { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.profile-control { position: relative; flex: 0 0 auto; }
+.profile-trigger { display: grid; place-items: center; width: 38px; height: 38px; overflow: hidden; border: 1px solid var(--line); border-radius: 50%; padding: 0; background: white; color: var(--action-blue); font-size: 12px; font-weight: 800; cursor: pointer; }
+.profile-trigger:hover { border-color: #a5d8e8; background: var(--soft-blue); }
+.profile-trigger img { width: 100%; height: 100%; object-fit: cover; }
+.profile-menu { position: absolute; z-index: 8; top: calc(100% + 10px); right: 0; display: grid; width: min(280px, calc(100vw - 28px)); gap: 7px; border: 1px solid var(--line); border-radius: 13px; padding: 15px; background: white; box-shadow: 0 16px 38px #142d4e1c; color: var(--ink); }
+.profile-menu-name { overflow-wrap: anywhere; font-size: 14px; }
+.profile-menu-email, .profile-menu-business { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.profile-menu-business { border-top: 1px solid var(--line); padding-top: 9px; color: var(--action-blue); font-weight: 650; }
+.profile-menu-logout { margin-top: 4px; }
 .app-layout { display: flex; flex: 1; min-height: calc(100vh - 76px); }
 .sidebar { position: sticky; top: 76px; display: flex; flex: 0 0 244px; flex-direction: column; align-self: flex-start; width: 244px; height: calc(100vh - 76px); min-height: 620px; overflow-y: auto; border-right: 1px solid #253b57; padding: 25px 14px 16px; background: var(--navy); color: #f8fafc; }
 .sidebar-caption { margin: 0 0 12px 12px; color: #b9c7d7; font-size: 11px; font-weight: 800; letter-spacing: .14em; }

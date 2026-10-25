@@ -2,6 +2,13 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { compareDecimalStrings } from "../lib/quantity.mjs";
+import {
+  getDisplayName,
+  getProfileImageUrl,
+  getProfileInitials,
+  getTimeGreeting,
+  type ProfileIdentity,
+} from "../lib/profile.mjs";
 import { getSupabaseBrowserClient } from "../lib/supabase/client";
 type Answer = {
   message: string;
@@ -251,6 +258,12 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profileUser, setProfileUser] = useState<ProfileIdentity | null>(null);
+  const [businessProfile, setBusinessProfile] = useState<{ name: string; timezone: string } | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [clockNow, setClockNow] = useState(() => new Date());
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const [productSearch, setProductSearch] = useState("");
   const [productStatusFilter, setProductStatusFilter] = useState("all");
   const [productSort, setProductSort] = useState("name");
@@ -429,6 +442,48 @@ export default function Home() {
   }, [loadAssistantStatus, loadDashboard, loadInventory, loadStockMovements, loadCustomers, loadSalesHistory]);
 
   useEffect(() => {
+    const client = getSupabaseBrowserClient();
+    if (!client) return;
+    let active = true;
+    const loadBusinessProfile = async () => {
+      try {
+        const response = await fetch("/api/v1/business", { cache: "no-store" });
+        if (!response.ok) return;
+        const business = (await response.json()) as { name?: string; timezone?: string };
+        if (active && business.name) {
+          setBusinessProfile({ name: business.name, timezone: business.timezone || "Asia/Kolkata" });
+        }
+      } catch {
+        if (active) setBusinessProfile(null);
+      }
+    };
+    const applySessionUser = (user: ProfileIdentity | null) => {
+      setProfileUser(user);
+      setProfileMenuOpen(false);
+      if (!user) {
+        setBusinessProfile(null);
+        return;
+      }
+      void loadBusinessProfile();
+    };
+    void client.auth.getSession().then(({ data }) => {
+      if (active) applySessionUser(data.session?.user ?? null);
+    });
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+      if (active) applySessionUser(session?.user ?? null);
+    });
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const pageSections = new Set(["dashboard", "sales", "inventory", "customers", "locations", "stock-movements", "ask"]);
     const syncPageFromHash = () => {
       const hash = decodeURIComponent(window.location.hash.slice(1));
@@ -472,6 +527,36 @@ export default function Home() {
       window.removeEventListener("resize", closeMenuOnDesktop);
     };
   }, []);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!profileMenuRef.current?.contains(event.target as Node)) setProfileMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setProfileMenuOpen(false);
+        profileTriggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [profileMenuOpen]);
+
+  async function signOut() {
+    const client = getSupabaseBrowserClient();
+    if (!client) return;
+    const { error } = await client.auth.signOut();
+    if (error) {
+      window.alert("Could not sign out. Please try again.");
+      return;
+    }
+    window.location.assign("/");
+  }
 
   function toggleSidebar() {
     const nextCollapsed = !sidebarCollapsed;
@@ -829,6 +914,13 @@ export default function Home() {
       : "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and GROQ_API_KEY in the backend environment, or switch to Normal Search.",
   [aiStatusError, aiConfigured, aiProvider, aiModel]);
   const activeProductCount = useMemo(() => products.filter((product) => product.active).length, [products]);
+  const profileName = getDisplayName(profileUser);
+  const profileEmail = profileUser?.email?.trim() ?? "";
+  const profileImageUrl = getProfileImageUrl(profileUser);
+  const greeting = getTimeGreeting(clockNow, businessProfile?.timezone ?? "Asia/Kolkata");
+  const profileEnabled = Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  );
   const stockAlertRows = useMemo(() => products
     .filter((product): product is InventoryProduct & { stock_status: "low_stock" | "out_of_stock" } =>
       product.stock_status === "low_stock" || product.stock_status === "out_of_stock")
@@ -892,24 +984,35 @@ export default function Home() {
             <span aria-hidden="true">♧</span>
             {stockAlertRows.length > 0 && <span className="notification-count">{stockAlertRows.length}</span>}
           </a>
-          <div className="business-context"><span className="business-avatar">V</span><span><strong>Business workspace</strong><small>A product of Vinayaka Services</small></span></div>
-          {process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && (
-            <button
-              className="logout-button"
-              type="button"
-              onClick={async () => {
-                const client = getSupabaseBrowserClient();
-                if (!client) return;
-                const { error } = await client.auth.signOut();
-                if (error) {
-                  window.alert("Could not sign out. Please try again.");
-                  return;
-                }
-                window.location.assign("/");
-              }}
-            >
-              Log Out
-            </button>
+          <div className="business-context"><span className="business-avatar">{getProfileInitials(businessProfile?.name ?? "")}</span><span><strong>{businessProfile?.name ?? "Business workspace"}</strong><small>A product of Vinayaka Services</small></span></div>
+          {profileEnabled && (
+            <>
+              <div className="profile-control" ref={profileMenuRef}>
+                <button
+                  className="profile-trigger"
+                  type="button"
+                  aria-label={`${profileMenuOpen ? "Close" : "Open"} profile menu for ${profileName || "account"}`}
+                  aria-haspopup="dialog"
+                  aria-expanded={profileMenuOpen}
+                  aria-controls="profile-menu"
+                  ref={profileTriggerRef}
+                  onClick={() => setProfileMenuOpen((open) => !open)}
+                >
+                  {profileImageUrl
+                    ? <img src={profileImageUrl} alt="" referrerPolicy="no-referrer" />
+                    : <span>{getProfileInitials(profileName, profileEmail)}</span>}
+                </button>
+                {profileMenuOpen && (
+                  <section className="profile-menu" id="profile-menu" role="dialog" aria-label="Account profile">
+                    <strong className="profile-menu-name">{profileName || "Account"}</strong>
+                    <span className="profile-menu-email">{profileEmail || "Email not available"}</span>
+                    <span className="profile-menu-business">{businessProfile?.name ?? "Business workspace"}</span>
+                    <button className="logout-button profile-menu-logout" type="button" onClick={signOut}>Log Out</button>
+                  </section>
+                )}
+              </div>
+              <button className="logout-button" type="button" onClick={signOut}>Log Out</button>
+            </>
           )}
         </div>
       </header>
@@ -988,8 +1091,8 @@ export default function Home() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">YOUR BUSINESS AT A GLANCE</p>
-            <h1 id="dashboard-title">Good day<span className="heading-dot">.</span></h1>
-            <p className="intro">Here’s what’s happening in your inventory today.</p>
+            <h1 id="dashboard-title">{greeting}{profileName ? `, ${profileName}` : ""}<span className="heading-dot">!</span></h1>
+            <p className="intro">Here’s what’s happening{businessProfile?.name ? ` at ${businessProfile.name}` : ""} in your inventory today.</p>
           </div>
           <button className="refresh-button" type="button" onClick={() => void loadDashboard()} disabled={dashboardLoading}>
             {dashboardLoading ? "Refreshing…" : "↻ Refresh"}
