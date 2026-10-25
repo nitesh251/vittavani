@@ -31,6 +31,11 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     const values = new FormData(event.currentTarget);
     const email = String(values.get("email") ?? "").trim();
     const password = String(values.get("password") ?? "");
+    const confirmPassword = String(values.get("confirm-password") ?? "");
+    if (isSignup && password !== confirmPassword) {
+      setError("Passwords do not match. Check both fields and try again.");
+      return;
+    }
     setSubmitting(true);
     try {
       const result = isSignup
@@ -69,15 +74,35 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <main className={`auth-page${isSignup ? "" : " auth-page-login"}`}>
+    <main className={`auth-page${isSignup ? " auth-page-signup" : " auth-page-login"}`}>
+      {isSignup && (
+        <section className="signup-intro" aria-label="About Vittavani">
+          <Link className="brand auth-brand" href="/">
+            <span className="brand-mark" aria-hidden="true">வி</span>
+            Vittavani
+          </Link>
+          <p className="eyebrow">A CLEARER VIEW OF YOUR BUSINESS</p>
+          <h2>Your business, easier to manage.</h2>
+          <p className="signup-intro-copy">
+            Keep your inventory, sales, and business records together, with a voice-first assistant when you need it.
+          </p>
+          <ul className="signup-benefits">
+            <li><span aria-hidden="true">✓</span> Know what stock you have and where it is stored.</li>
+            <li><span aria-hidden="true">✓</span> Record sales and keep customer accounts up to date.</li>
+            <li><span aria-hidden="true">✓</span> Ask business questions in the language you prefer.</li>
+          </ul>
+        </section>
+      )}
       <section className="auth-card" aria-labelledby="auth-title">
-        <Link className="brand auth-brand" href="/">
-          <span className="brand-mark" aria-hidden="true">வி</span>
-          Vittavani
-        </Link>
-        <h1 id="auth-title">{isSignup ? "Create your account" : "Welcome back to Vittavani"}</h1>
+        {!isSignup && (
+          <Link className="brand auth-brand" href="/">
+            <span className="brand-mark" aria-hidden="true">வி</span>
+            Vittavani
+          </Link>
+        )}
+        <h1 id="auth-title">{isSignup ? "Create your Vittavani account" : "Welcome back to Vittavani"}</h1>
         <p className="auth-description">
-          {isSignup ? "Sign up as a business owner. You’ll create your business workspace next." : "Sign in to manage your business."}
+          {isSignup ? "Start managing your business in one place." : "Sign in to manage your business."}
         </p>
         <form className="auth-form" onSubmit={submit}>
           <label htmlFor="auth-email">Email address</label>
@@ -92,24 +117,40 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
               required
               minLength={8}
             />
-            {!isSignup && (
-              <button
-                className="auth-password-toggle"
-                type="button"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-                aria-pressed={showPassword}
-                onClick={() => setShowPassword((visible) => !visible)}
-              >
-                {showPassword ? "Hide" : "Show"}
-              </button>
-            )}
+            <button
+              className="auth-password-toggle"
+              type="button"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-controls="auth-password"
+              aria-pressed={showPassword}
+              onClick={() => setShowPassword((visible) => !visible)}
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
           </div>
+          {isSignup && <p className="auth-password-hint">Use at least 8 characters for your password.</p>}
+          {isSignup && (
+            <>
+              <label htmlFor="auth-confirm-password">Confirm password</label>
+              <input
+                id="auth-confirm-password"
+                name="confirm-password"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+              />
+            </>
+          )}
           {error && <p className="auth-error" role="alert">{error}</p>}
           {message && <p className="auth-message" role="status">{message}</p>}
           <button className="button button-primary auth-submit" disabled={submitting} type="submit">
             {submitting ? "Please wait…" : isSignup ? "Create account" : "Log In"}
           </button>
         </form>
+        {isSignup && (
+          <p className="signup-privacy-note">Your business data is kept separate from other businesses.</p>
+        )}
         <p className="auth-switch">
           {isSignup ? "Already have an account? " : "New to Vittavani? "}
           <Link href={isSignup ? "/login" : "/signup"}>{isSignup ? "Log in" : "Create an account"}</Link>

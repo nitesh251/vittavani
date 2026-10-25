@@ -10,21 +10,33 @@ function formatCurrency(amount, currency) {
   }
 }
 
-function movementInsight(movement) {
+function movementInsight(movement, timeZone) {
+  const date = new Date(movement.created_at);
+  let dateLabel = "";
+  if (!Number.isNaN(date.getTime())) {
+    try {
+      dateLabel = ` on ${new Intl.DateTimeFormat("en-IN", {
+        dateStyle: "medium",
+        timeZone,
+      }).format(date)}`;
+    } catch {
+      dateLabel = ` on ${date.toLocaleDateString("en-IN", { dateStyle: "medium" })}`;
+    }
+  }
   if (movement.movement_type === "purchase_receipt") {
     return {
-      title: "Recently received stock",
-      detail: `${movement.display_quantity} of ${movement.product_name} was received.`,
+      title: "Stock receipt recorded",
+      detail: `${movement.display_quantity} of ${movement.product_name} was received${dateLabel}.`,
       action: "View stock movements",
-      href: "#movements",
+      href: "#stock-movements",
       icon: "↓",
       tone: "cyan",
     };
   }
   if (movement.movement_type === "sale") {
     return {
-      title: "Recently sold",
-      detail: `${movement.display_quantity} of ${movement.product_name} was recorded as sold.`,
+      title: "Sale recorded",
+      detail: `${movement.display_quantity} of ${movement.product_name} was recorded as sold${dateLabel}.`,
       action: "View sales history",
       href: "#sales",
       icon: "↗",
@@ -92,10 +104,19 @@ export function getDashboardInsightsState({ loading, error, dashboard }) {
       icon: "!",
       tone: "amber",
     });
+  } else if (dashboard.out_of_stock_count > 0) {
+    insights.push({
+      title: "Products out of stock",
+      detail: `${dashboard.out_of_stock_count} tracked ${dashboard.out_of_stock_count === 1 ? "product has" : "products have"} no stock on hand.`,
+      action: "Review inventory",
+      href: "#inventory",
+      icon: "!",
+      tone: "amber",
+    });
   }
 
   const recentMovement = dashboard.recent_stock_activity
-    ?.map(movementInsight)
+    ?.map((movement) => movementInsight(movement, sales?.timezone))
     .find(Boolean);
   if (recentMovement) insights.push(recentMovement);
 

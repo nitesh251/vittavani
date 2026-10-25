@@ -3,6 +3,7 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { compareDecimalStrings } from "../lib/quantity.mjs";
 import { contextualizeFollowUp } from "../lib/conversation.mjs";
+import { getDashboardInsightsState } from "../lib/dashboard-insights.mjs";
 import {
   getDisplayName,
   getProfileImageUrl,
@@ -1334,6 +1335,11 @@ export default function Home() {
       status: product.stock_status,
     })),
   [products, locationNames]);
+  const businessInsightsState = getDashboardInsightsState({
+    loading: dashboardLoading,
+    error: dashboardError,
+    dashboard,
+  });
 
   return (
     <main className="page">
@@ -1715,36 +1721,40 @@ export default function Home() {
             <p className="sales-data-note">{salesOverview.sales_status_note}</p>
           </section>
         )}
-        {!dashboardLoading && !dashboardError && (
+        {(dashboardLoading || dashboardError || dashboard) && (
           <section className="business-insights" aria-labelledby="business-insights-title">
             <div className="insights-heading">
               <div><p className="eyebrow">RECORD-BASED GUIDANCE</p><h2 id="business-insights-title">Vittavani’s business insights</h2></div>
               <span>Based on saved sales and stock data</span>
             </div>
             <div className="insight-list">
-              {salesComparison && salesOverview && (
-                <article className="insight-card insight-sales">
-                  <span className="insight-icon" aria-hidden="true">↗</span>
+              {businessInsightsState.status === "loading" && (
+                <p className="insights-empty" role="status">Loading saved sales and inventory data…</p>
+              )}
+              {businessInsightsState.status === "error" && (
+                <div className="insights-error" role="alert">
+                  <p>Business insights could not be loaded. Try again to refresh your saved data.</p>
+                  <button className="text-button" type="button" onClick={() => void loadDashboard()}>Try again</button>
+                </div>
+              )}
+              {businessInsightsState.status === "empty" && (
+                <p className="insights-empty">
+                  No products or recent sales and stock activity are recorded yet.{" "}
+                  <a href="#inventory" onClick={() => setActiveSection("inventory")}>Add a product or receive stock</a> to get started.
+                </p>
+              )}
+              {businessInsightsState.status === "ready" && businessInsightsState.insights.map((insight) => (
+                <article className={`insight-card insight-${insight.tone}`} key={`${insight.title}-${insight.href}`}>
+                  <span className="insight-icon" aria-hidden="true">{insight.icon}</span>
                   <div>
-                    <h3>{salesComparison.direction > 0 ? "Recorded sales increased" : salesComparison.direction < 0 ? "Recorded sales decreased" : "Recorded sales were unchanged"}</h3>
-                    <p>The last seven days totalled {formatCurrency(salesComparison.current, salesOverview.currency)}, compared with {formatCurrency(salesComparison.previous, salesOverview.currency)} in the previous seven days.</p>
-                    <a href="#sales" onClick={() => setActiveSection("sales")}>View sales history <span aria-hidden="true">→</span></a>
+                    <h3>{insight.title}</h3>
+                    <p>{insight.detail}</p>
+                    <a href={insight.href} onClick={() => setActiveSection(insight.href.slice(1))}>
+                      {insight.action} <span aria-hidden="true">→</span>
+                    </a>
                   </div>
                 </article>
-              )}
-              {stockAlertRows.length > 0 && (
-                <article className="insight-card insight-stock">
-                  <span className="insight-icon" aria-hidden="true">!</span>
-                  <div>
-                    <h3>Review stock levels</h3>
-                    <p>{stockAlertRows[0].name} has {stockAlertRows[0].available} available against a minimum of {stockAlertRows[0].minimum}.</p>
-                    <a href="#inventory" onClick={() => setActiveSection("inventory")}>Review inventory <span aria-hidden="true">→</span></a>
-                  </div>
-                </article>
-              )}
-              {!salesComparison && stockAlertRows.length === 0 && (
-                <p className="insights-empty">More recorded sales or stock activity is needed to provide business-specific insights.</p>
-              )}
+              ))}
             </div>
           </section>
         )}

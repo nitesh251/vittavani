@@ -6,6 +6,7 @@ import { getDashboardInsightsState } from "../lib/dashboard-insights.mjs";
 function dashboard(overrides = {}) {
   return {
     product_count: 0,
+    out_of_stock_count: 0,
     stock_by_unit: [],
     low_stock_products: [],
     recent_stock_activity: [],
@@ -45,6 +46,7 @@ test("sales and recent movements produce concise, data-backed insights", () => {
         movement_type: "purchase_receipt",
         product_name: "Mouse",
         display_quantity: "4 pieces",
+        created_at: "2026-10-24T08:00:00Z",
       }],
     }),
   });
@@ -53,7 +55,7 @@ test("sales and recent movements produce concise, data-backed insights", () => {
   assert.equal(state.insights.length, 3);
   assert.match(state.insights[0].detail, /₹500\.00/);
   assert.match(state.insights[1].detail, /3 pieces sold/);
-  assert.match(state.insights[2].detail, /4 pieces of Mouse was received/);
+  assert.match(state.insights[2].detail, /4 pieces of Mouse was received on/);
 });
 
 test("insufficient sales periods are not presented as a comparison", () => {
@@ -78,6 +80,16 @@ test("no records suggests a useful first action instead of fabricating insight",
 
   assert.equal(state.status, "empty");
   assert.deepEqual(state.insights, []);
+});
+
+test("reports products with zero stock even when their minimum stock is zero", () => {
+  const state = getDashboardInsightsState({
+    dashboard: dashboard({ product_count: 1, out_of_stock_count: 1 }),
+  });
+
+  assert.equal(state.status, "ready");
+  assert.equal(state.insights[0].title, "Products out of stock");
+  assert.match(state.insights[0].detail, /1 tracked product has no stock on hand/);
 });
 
 test("loading and failed dashboard requests are distinct from an empty business", () => {
