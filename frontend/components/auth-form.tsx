@@ -74,32 +74,24 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <main className={`auth-page${isSignup ? " auth-page-signup" : " auth-page-login"}`}>
-      {isSignup && (
-        <section className="signup-intro" aria-label="About Vittavani">
-          <Link className="brand auth-brand" href="/">
-            <span className="brand-mark" aria-hidden="true">வி</span>
-            Vittavani
-          </Link>
-          <p className="eyebrow">A CLEARER VIEW OF YOUR BUSINESS</p>
-          <h2>Your business, easier to manage.</h2>
-          <p className="signup-intro-copy">
-            Keep your inventory, sales, and business records together, with a voice-first assistant when you need it.
-          </p>
-          <ul className="signup-benefits">
-            <li><span aria-hidden="true">✓</span> Know what stock you have and where it is stored.</li>
-            <li><span aria-hidden="true">✓</span> Record sales and keep customer accounts up to date.</li>
-            <li><span aria-hidden="true">✓</span> Ask business questions in the language you prefer.</li>
-          </ul>
-        </section>
-      )}
+    <main className="auth-page auth-page-auth">
+      <section className="signup-intro" aria-label="About Vittavani">
+        <Link className="brand auth-brand" href="/">
+          <span className="brand-mark" aria-hidden="true">வி</span>
+          Vittavani
+        </Link>
+        <p className="eyebrow">A CLEARER VIEW OF YOUR BUSINESS</p>
+        <h2>Your business, easier to manage.</h2>
+        <p className="signup-intro-copy">
+          Keep your inventory, sales, and business records together, with a voice-first assistant when you need it.
+        </p>
+        <ul className="signup-benefits">
+          <li><span aria-hidden="true">✓</span> Know what stock you have and where it is stored.</li>
+          <li><span aria-hidden="true">✓</span> Record sales and keep customer accounts up to date.</li>
+          <li><span aria-hidden="true">✓</span> Ask business questions in the language you prefer.</li>
+        </ul>
+      </section>
       <section className="auth-card" aria-labelledby="auth-title">
-        {!isSignup && (
-          <Link className="brand auth-brand" href="/">
-            <span className="brand-mark" aria-hidden="true">வி</span>
-            Vittavani
-          </Link>
-        )}
         <h1 id="auth-title">{isSignup ? "Create your Vittavani account" : "Welcome back to Vittavani"}</h1>
         <p className="auth-description">
           {isSignup ? "Start managing your business in one place." : "Sign in to manage your business."}

@@ -392,7 +392,7 @@ export default function Home() {
   const [profileUser, setProfileUser] = useState<ProfileIdentity | null>(null);
   const [businessProfile, setBusinessProfile] = useState<{ name: string; timezone: string } | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [clockNow, setClockNow] = useState(() => new Date());
+  const [clockNow, setClockNow] = useState<Date | null>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const businessProfileUserIdRef = useRef<string | null>(null);
@@ -666,6 +666,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    setClockNow(new Date());
     const timer = window.setInterval(() => setClockNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -1305,7 +1306,9 @@ export default function Home() {
   const profileName = getDisplayName(profileUser);
   const profileEmail = profileUser?.email?.trim() ?? "";
   const profileImageUrl = getProfileImageUrl(profileUser);
-  const greeting = getTimeGreeting(clockNow, businessProfile?.timezone ?? "Asia/Kolkata");
+  const greeting = clockNow
+    ? getTimeGreeting(clockNow, businessProfile?.timezone ?? "Asia/Kolkata")
+    : "Welcome";
   const salesComparison = salesOverview
     && salesOverview.current_period.sale_count > 0
     && salesOverview.previous_period.sale_count > 0
