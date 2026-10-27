@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PublicHeader } from "../components/public-header";
 import { PublicFooter } from "../components/public-footer";
+import { PublicScrollReveals } from "../components/public-scroll-reveals";
 
 const features = [
   {
@@ -73,6 +74,7 @@ export default function HomePage() {
   return (
     <div className="public-page">
       <PublicHeader />
+      <PublicScrollReveals />
 
       <main className="public-main">
       <section className="public-hero" aria-labelledby="hero-heading">
@@ -128,7 +130,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="public-features" id="features" aria-labelledby="features-heading">
+      <section className="public-features" id="features" aria-labelledby="features-heading" data-scroll-reveal>
         <div className="public-section-heading">
           <p className="public-eyebrow">LESS TAPPING, MORE DOING</p>
           <h2 id="features-heading">Everyday business tasks, made easier.</h2>
@@ -136,7 +138,7 @@ export default function HomePage() {
         </div>
         <div className="public-feature-grid">
           {features.map((feature, index) => (
-            <article className="public-feature-card" key={feature.title}>
+            <article className="public-feature-card" key={feature.title} data-scroll-reveal>
               <div className="public-feature-card-top">
                 <FeatureIcon name={feature.icon} />
                 <span className="public-feature-index">0{index + 1}</span>
@@ -148,7 +150,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="public-how" id="how-it-works" aria-labelledby="how-heading">
+      <section className="public-how" id="how-it-works" aria-labelledby="how-heading" data-scroll-reveal>
         <div className="public-how-intro">
           <p className="public-eyebrow">A NATURAL WAY TO GET THINGS DONE</p>
           <h2 id="how-heading">Less tapping.<br /><span>More doing.</span></h2>
@@ -156,17 +158,17 @@ export default function HomePage() {
           <Link className="public-text-link" href="/signup">Try Vittavani <span aria-hidden="true">→</span></Link>
         </div>
         <div className="public-steps">
-          <article className="public-step-card">
+          <article className="public-step-card" data-scroll-reveal>
             <span className="public-step-number">01</span>
             <div><h3>Ask naturally</h3><p>Type a request or use browser speech where it is supported.</p></div>
             <span className="public-step-symbol public-step-symbol-blue" aria-hidden="true">⌁</span>
           </article>
-          <article className="public-step-card">
+          <article className="public-step-card" data-scroll-reveal>
             <span className="public-step-number">02</span>
             <div><h3>Get a useful response</h3><p>Check stock, locations, customer balances, or supported actions.</p></div>
             <span className="public-step-symbol public-step-symbol-purple" aria-hidden="true">✦</span>
           </article>
-          <article className="public-step-card">
+          <article className="public-step-card" data-scroll-reveal>
             <span className="public-step-number">03</span>
             <div><h3>Keep work together</h3><p>Review saved inventory, sales, movements, and account activity in your workspace.</p></div>
             <span className="public-step-symbol public-step-symbol-amber" aria-hidden="true">↗</span>
@@ -174,7 +176,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="public-business" id="for-businesses" aria-labelledby="business-heading">
+      <section className="public-business" id="for-businesses" aria-labelledby="business-heading" data-scroll-reveal>
         <div className="public-business-mark" aria-hidden="true">ವಿ</div>
         <div>
           <p className="public-eyebrow">MADE FOR THE WAY YOU WORK</p>
@@ -186,8 +188,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="public-pricing" id="pricing" aria-labelledby="pricing-heading">
-        <div className="public-pricing-card">
+      <section className="public-pricing" id="pricing" aria-labelledby="pricing-heading" data-scroll-reveal>
+        <div className="public-pricing-card" data-scroll-reveal>
           <div>
             <p className="public-eyebrow">GET STARTED WITH VITTAVANI</p>
             <h2 id="pricing-heading">A workspace for your business.</h2>
@@ -197,14 +199,14 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="public-faq" id="faq" aria-labelledby="faq-heading">
+      <section className="public-faq" id="faq" aria-labelledby="faq-heading" data-scroll-reveal>
         <div className="public-section-heading">
           <p className="public-eyebrow">GOOD TO KNOW</p>
           <h2 id="faq-heading">Frequently asked questions</h2>
         </div>
         <div className="public-faq-list">
           {faqs.map((faq) => (
-            <details className="public-faq-item" key={faq.question}>
+            <details className="public-faq-item" key={faq.question} data-scroll-reveal>
               <summary>{faq.question}<span aria-hidden="true">+</span></summary>
               <p>{faq.answer}</p>
             </details>
@@ -212,7 +214,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="public-cta">
+      <section className="public-cta" data-scroll-reveal>
         <div>
           <p className="public-eyebrow">YOUR BUSINESS, YOUR WORKSPACE</p>
           <h2>Make everyday operations simpler.</h2>
@@ -220,7 +222,7 @@ export default function HomePage() {
         <Link className="button button-primary" href="/signup">Create your workspace <span aria-hidden="true">→</span></Link>
       </section>
       </main>
-      <PublicFooter />
+      <PublicFooter reveal />
     </div>
   );
 }

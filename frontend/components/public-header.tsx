@@ -32,12 +32,12 @@ export function PublicHeader({ variant = "home" }: PublicHeaderProps) {
       <div className="public-header-actions">
         {isHome ? (
           <>
-            <Link className="public-login-link" href="/login">Log In</Link>
+            <Link className="button button-outline public-login-link" href="/login">Log In</Link>
             <Link className="button button-primary" href="/signup">Get Started <span aria-hidden="true">→</span></Link>
           </>
         ) : (
           <Link
-            className={variant === "login" ? "button button-primary" : "public-login-link"}
+            className={variant === "login" ? "button button-primary" : "button button-outline public-login-link"}
             href={authHref}
           >
             {authLabel}
@@ -52,11 +52,11 @@ export function PublicHeader({ variant = "home" }: PublicHeaderProps) {
           ))}
           {isHome ? (
             <>
-              <Link href="/login">Log In</Link>
+              <Link className="public-mobile-login" href="/login">Log In</Link>
               <Link className="public-mobile-signup" href="/signup">Get Started <span aria-hidden="true">→</span></Link>
             </>
           ) : (
-            <Link className={variant === "login" ? "public-mobile-signup" : undefined} href={authHref}>{authLabel}</Link>
+            <Link className={variant === "login" ? "public-mobile-signup" : "public-mobile-login"} href={authHref}>{authLabel}</Link>
           )}
         </nav>
       </details>

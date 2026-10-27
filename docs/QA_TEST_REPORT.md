@@ -109,6 +109,23 @@ The shared public header was visibly white on the Homepage, Login, and Signup ro
 | Browser verification | **Passed** | Homepage and Login were inspected at 390px/1440px; Signup at desktop. Computed header background was `rgb(20, 45, 78)`, brand white, navigation `rgb(224, 242, 254)`, and existing CTA `rgb(3, 105, 161)`. No horizontal overflow was observed. |
 | Dependencies | **Passed** | `npm ci` used the existing lockfile and reported zero vulnerabilities; no dependency files changed. |
 
+## Phase-seven results
+
+This phase refined the shared public/auth header actions and added progressive scroll reveals to the public homepage. Public navigation, authentication routes and behavior, and the shared footer remain unchanged.
+
+Files changed: `frontend/app/globals.css`, `frontend/app/page.tsx`, `frontend/components/public-header.tsx`, `frontend/components/public-footer.tsx`, new `frontend/components/public-scroll-reveals.tsx`, `frontend/tests/global-theme.test.mjs`, and this report.
+
+| Area | Result | Evidence and limits |
+| --- | --- | --- |
+| Header action styles and destinations | **Passed** | “Log In” is outlined on the public homepage and Signup page; the Login-page “Create account,” homepage “Get Started,” and homepage/auth mobile account-creation actions retain the solid action-blue style. Existing `/login` and `/signup` destinations are unchanged. |
+| Shared public/auth page appearance | **Passed** | Homepage, Login, and Signup were inspected at 390×844 and 1440×900. No horizontal overflow was observed. The header and shared footer both computed to Midnight Navy (`rgb(20, 45, 78)`); form content remained present at both sizes. |
+| Mobile navigation | **Passed** | The homepage mobile menu opened with the existing section links, an outlined Log In action, and a solid Get Started action. Login and Signup render their appropriate Create account / Log in mobile actions. |
+| Scroll reveals | **Passed** | A production browser check confirmed visible-by-default SSR content, viewport-triggered reveal, and one-time unobserve after reveal. Related feature cards use staggered delays up to 250 ms. Reveal activation is skipped for reduced-motion preference or unavailable IntersectionObserver; these fallback paths were covered by source-level regression assertions rather than browser preference emulation. |
+| Frontend regression tests | **Passed** | 45 Node tests passed, including header style/destination assertions and reduced-motion/progressive-enhancement checks. |
+| TypeScript and production build | **Passed** | `npm run lint` and `npm run build` passed; all nine routes generated. |
+| Dependency audit | **Passed** | `npm ci` installed the existing lockfile and reported zero vulnerabilities; no dependency files changed. |
+| GitHub Actions | **Pending** | Run `40568772066` was in progress on the pre-change commit `68a675e`; GitHub returned 404 for the active job logs, so it does not validate this phase. |
+
 ## Manual checks required when service access is available
 
 ### Supabase authentication
