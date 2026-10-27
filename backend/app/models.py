@@ -403,3 +403,28 @@ class CommandRequest(Base):
     payload_hash: Mapped[str] = mapped_column(String(64))
     response_body: Mapped[dict[str, object]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class AssistantConversation(Base):
+    __tablename__ = "assistant_conversations"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id",
+            "auth_subject",
+            "conversation_id",
+            name="uq_assistant_conversation_owner",
+        ),
+        Index("ix_assistant_conversations_expires_at", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    business_id: Mapped[UUID] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"))
+    auth_subject: Mapped[str] = mapped_column(String(255))
+    conversation_id: Mapped[UUID] = mapped_column()
+    pending_action: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )

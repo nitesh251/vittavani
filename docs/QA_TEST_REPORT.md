@@ -53,6 +53,21 @@ A separate, clean PostgreSQL 16 database was started for the tenant exercise. `p
 
 Frontend dependencies were installed with `npm ci`; npm reported zero vulnerabilities. Frontend suites, TypeScript, and the production build were not rerun because no frontend source files changed in this phase.
 
+## Phase-three results
+
+This phase covers the authenticated header color, login redirect/loading behavior, and conversational assistant routing and follow-ups.
+
+| Area | Result | Evidence and limits |
+| --- | --- | --- |
+| Frontend regression tests | **Passed** | 40 Node tests passed, including auth error sanitization, redirect/loading safeguards, shared blue token usage, and per-user conversation IDs. |
+| Frontend type check and production build | **Passed** | `npm run build` and `npm run lint` passed from `frontend/`. |
+| Backend regression tests | **Passed** | 123 pytest tests passed, covering read-only general advice, data-grounded sales suggestions, persisted cash/credit-sale location follow-ups, expiry cleanup, and conversation-owner isolation. One existing Starlette/httpx deprecation warning remains. |
+| Assistant clarification migration | **Passed locally** | Alembic upgraded a temporary SQLite database through `0005_assistant_conversations`; no hosted PostgreSQL migration was available in this phase. |
+| AI provider behavior | **Partially verified** | Structured Groq requests and safe failures were tested with mocks. Live Groq was not configured; no live provider calls were made. |
+| Supabase/browser integration | **Not run** | Hosted authentication and browser-based verification were unavailable. |
+| Dependency audit | **Passed** | `npm ci` reported zero vulnerabilities; no dependencies were added. |
+| GitHub Actions | **Pending** | Run `40532073717` was still in progress on the pre-change commit `b2a4c52`; it does not validate this phase's changes. |
+
 ## Manual checks required when service access is available
 
 ### Supabase authentication

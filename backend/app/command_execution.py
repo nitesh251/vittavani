@@ -1,4 +1,6 @@
+from difflib import SequenceMatcher
 from decimal import Decimal
+import re
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -16,7 +18,7 @@ from app.formatting import format_quantity_label
 from app.location_paths import location_paths
 from app.models import Customer, CustomerLedgerEntry, InventoryBalance, Location, Product, ProductAlias
 from app.query_service import lookup_product
-from app.query_understanding import Candidate, Intent, resolve_product
+from app.query_understanding import Candidate, Intent, normalize_text, resolve_product
 
 _UNIT_CANONICAL = {
     "packets": "packet",
@@ -154,10 +156,79 @@ def _resolve_location(
         ]
         if len(matches) == 1:
             return matches[0], []
-        return None, [paths.get(location.id, location.name) for location in matches]
+        if matches:
+            return None, [paths.get(location.id, location.name) for location in matches]
+        compact_term = re.sub(r"[^a-z0-9\u0900-\u097f]", "", normalize_text(term))
+        if compact_term:
+            ranked = sorted(
+                (
+                    (
+                        max(
+                            SequenceMatcher(
+                                None,
+                                compact_term,
+                                re.sub(r"[^a-z0-9\u0900-\u097f]", "", normalize_text(candidate_text)),
+                            ).ratio()
+                            for candidate_text in (location.name, paths.get(location.id, location.name))
+                        ),
+                        location,
+                    )
+                    for location in candidates
+                ),
+                key=lambda item: item[0],
+                reverse=True,
+            )
+            if ranked and ranked[0][0] >= 0.78:
+                if len(ranked) == 1 or ranked[0][0] - ranked[1][0] >= 0.08:
+                    return ranked[0][1], []
+                close_matches = [
+                    paths.get(location.id, location.name)
+                    for score, location in ranked
+                    if score >= ranked[0][0] - 0.08
+                ]
+                return None, close_matches
+        return None, []
     if len(candidates) == 1:
         return candidates[0], []
     return None, [paths.get(location.id, location.name) for location in candidates]
+
+
+def resolve_location_follow_up(
+    session: Session,
+    business_id: UUID,
+    query: str,
+) -> tuple[Location | None, list[str]]:
+    normalized_query = normalize_text(re.sub(r"\bstore\s+room\b", "storeroom", query.casefold()))
+    ignored_words = {
+        "at", "in", "the", "to", "it", "is", "was", "stored", "placed", "location", "stock",
+        "में", "पर", "है", "रखा", "रखो",
+    }
+    query_tokens = {
+        token
+        for token in re.findall(r"[a-z0-9\u0900-\u097f]+", normalized_query)
+        if token not in ignored_words
+    }
+    if not query_tokens:
+        return None, []
+
+    paths = location_paths(session, business_id)
+    matches = [
+        location
+        for location in session.scalars(
+            select(Location).where(Location.business_id == business_id)
+        ).all()
+        if query_tokens.issubset(
+            set(
+                re.findall(
+                    r"[a-z0-9\u0900-\u097f]+",
+                    normalize_text(paths.get(location.id, location.name).casefold()),
+                )
+            )
+        )
+    ]
+    if len(matches) == 1:
+        return matches[0], []
+    return None, [paths.get(location.id, location.name) for location in matches]
 
 
 def _command_result(

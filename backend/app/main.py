@@ -2,7 +2,7 @@ import secrets
 import hashlib
 import json
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterator, Literal
 from uuid import UUID
@@ -14,11 +14,18 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.ai_service import AI_INTENT_MAP, AIProviderError, ai_is_configured, extract_business_command, extract_product_query
+from app.ai_service import (
+    AI_INTENT_MAP,
+    AIProviderError,
+    ai_is_configured,
+    extract_business_command,
+    extract_product_query,
+    generate_assistant_response,
+)
 from app.auth import verify_supabase_access_token
 from app.business_actions import customer_balance, post_customer_payment, post_receipt, post_sale
 from app.command_service import BusinessCommand, CommandIntent, interpret_command, is_action_like_request
-from app.command_execution import execute_command
+from app.command_execution import execute_command, resolve_location_follow_up
 from app.config import settings
 from app.database import get_db
 from app.formatting import format_quantity, format_quantity_label
@@ -27,6 +34,7 @@ from app.location_paths import location_paths
 from app.models import (
     Business,
     BusinessMember,
+    AssistantConversation,
     CommandRequest,
     Customer,
     CustomerLedgerEntry,
@@ -43,7 +51,7 @@ from app.models import (
     SupplierPurchaseLine,
 )
 from app.query_service import lookup_product
-from app.query_understanding import Intent
+from app.query_understanding import Intent, understand_query
 from app.sales_analytics import answer_business_question, classify_business_question, sales_overview
 
 app = FastAPI(title="Vittavani API", version="0.1.0")
@@ -62,6 +70,7 @@ class AskRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     mode: Literal["normal", "ai"] = "normal"
     confirmation: bool = False
+    conversation_id: UUID | None = None
 
 
 class AskResponse(BaseModel):
@@ -335,6 +344,126 @@ def _transaction(session: Session) -> Iterator[None]:
         raise
 
 
+_ASSISTANT_PENDING_TTL = timedelta(minutes=10)
+_LOCATION_WORDS = ("store", "room", "rack", "shelf", "location", "warehouse", "godown", "स्टोर", "रैक", "शेल्फ", "गोदाम", "जगह")
+_MUTATING_COMMANDS = {
+    CommandIntent.CREATE_CUSTOMER,
+    CommandIntent.RECORD_CUSTOMER_PAYMENT,
+    CommandIntent.RECORD_SALE,
+    CommandIntent.RECORD_CREDIT_SALE,
+    CommandIntent.RECEIVE_STOCK,
+    CommandIntent.CREATE_PRODUCT,
+    CommandIntent.UPDATE_PRODUCT,
+    CommandIntent.TRANSFER_STOCK,
+}
+
+
+def _is_location_follow_up(query: str) -> bool:
+    normalized = " ".join(query.casefold().split())
+    return (
+        not is_action_like_request(query)
+        and "?" not in query
+        and any(word in normalized for word in _LOCATION_WORDS)
+    )
+
+
+def _get_assistant_conversation(
+    session: Session,
+    business_id: UUID,
+    auth_subject: str | None,
+    conversation_id: UUID | None,
+) -> AssistantConversation | None:
+    if auth_subject is None or conversation_id is None:
+        return None
+    conversation = session.scalar(
+        select(AssistantConversation).where(
+            AssistantConversation.business_id == business_id,
+            AssistantConversation.auth_subject == auth_subject,
+            AssistantConversation.conversation_id == conversation_id,
+        )
+    )
+    return conversation
+
+
+def _purge_expired_assistant_conversations(session: Session) -> None:
+    with _transaction(session):
+        session.execute(
+            delete(AssistantConversation).where(
+                AssistantConversation.expires_at <= datetime.now(UTC)
+            )
+        )
+
+
+def _save_pending_assistant_action(
+    session: Session,
+    business_id: UUID,
+    auth_subject: str | None,
+    conversation_id: UUID | None,
+    command: BusinessCommand,
+) -> None:
+    if auth_subject is None or conversation_id is None:
+        return
+    conversation = session.scalar(
+        select(AssistantConversation)
+        .where(
+            AssistantConversation.business_id == business_id,
+            AssistantConversation.auth_subject == auth_subject,
+            AssistantConversation.conversation_id == conversation_id,
+        )
+        .with_for_update()
+    )
+    if conversation is None:
+        conversation = AssistantConversation(
+            business_id=business_id,
+            auth_subject=auth_subject,
+            conversation_id=conversation_id,
+            pending_action=command.model_dump(mode="json"),
+            expires_at=datetime.now(UTC) + _ASSISTANT_PENDING_TTL,
+        )
+        session.add(conversation)
+    else:
+        conversation.pending_action = command.model_dump(mode="json")
+        conversation.expires_at = datetime.now(UTC) + _ASSISTANT_PENDING_TTL
+
+
+def _verified_advice_context(action_result: dict[str, object]) -> dict[str, object]:
+    allowed = {
+        "current_period",
+        "previous_period",
+        "top_products",
+        "restock_candidates",
+        "daily_trend",
+    }
+    return {key: action_result[key] for key in allowed if key in action_result}
+
+
+def _is_general_advice_question(query: str) -> bool:
+    normalized = " ".join(query.casefold().split())
+    return normalized.startswith(
+        (
+            "how can i ",
+            "how can we ",
+            "how do i ",
+            "how do we ",
+            "how should i ",
+            "how should we ",
+            "how to ",
+            "what can i do ",
+            "what should i do ",
+            "any advice ",
+            "any tips ",
+            "give me advice ",
+            "give me tips ",
+            "suggest ways ",
+            "suggest ideas ",
+            "व्यापार कैसे ",
+            "बिज़नेस कैसे ",
+            "बिजनेस कैसे ",
+            "मुझे सलाह ",
+        )
+    )
+
+
 class DashboardProduct(BaseModel):
     id: UUID
     name: str
@@ -440,6 +569,12 @@ def authenticated_subject(
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> str:
     return _bearer_subject(authorization)
+
+
+def optional_authenticated_subject(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> str | None:
+    return _bearer_subject(authorization) if authorization is not None else None
 
 
 def development_business_id(
@@ -573,9 +708,53 @@ def ask(
     body: AskRequest,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     business_id: UUID = Depends(development_business_id),
+    auth_subject: str | None = Depends(optional_authenticated_subject),
     session: Session = Depends(get_db),
 ) -> AskResponse:
-    if classify_business_question(body.query) is not None:
+    _purge_expired_assistant_conversations(session)
+    conversation = _get_assistant_conversation(
+        session,
+        business_id,
+        auth_subject,
+        body.conversation_id,
+    )
+    pending_command = None
+    if (
+        conversation is not None
+        and conversation.pending_action is not None
+        and _is_location_follow_up(body.query)
+    ):
+        location, location_candidates = resolve_location_follow_up(
+            session,
+            business_id,
+            body.query,
+        )
+        if location is None:
+            return AskResponse(
+                intent=BusinessCommand.model_validate(conversation.pending_action).intent.value,
+                original_query=body.query,
+                locations=[],
+                candidates=location_candidates,
+                clarification_required=True,
+                message=(
+                    "I couldn't match that to one recorded location. "
+                    "Please specify the complete location name or path."
+                ),
+                mode=body.mode,
+            )
+        pending_command = BusinessCommand.model_validate(conversation.pending_action).model_copy(
+            update={
+                "location_query": location_paths(session, business_id).get(
+                    location.id,
+                    location.name,
+                )
+            }
+        )
+    elif conversation is not None:
+        with _transaction(session):
+            session.delete(conversation)
+
+    if pending_command is None and classify_business_question(body.query) is not None:
         business = session.get(Business, business_id)
         if business is not None:
             insight = answer_business_question(
@@ -586,6 +765,19 @@ def ask(
             )
             if insight is not None:
                 message, action_result = insight
+                if (
+                    body.mode == "ai"
+                    and action_result.get("intent") == "improve"
+                    and ai_is_configured()
+                ):
+                    try:
+                        suggestions = generate_assistant_response(
+                            body.query,
+                            verified_context=_verified_advice_context(action_result),
+                        )
+                        message += f"\n\nSuggestions: {suggestions}"
+                    except AIProviderError:
+                        message += "\n\nAI suggestions are temporarily unavailable; the recorded facts above are unchanged."
                 return AskResponse(
                     intent="business_insight",
                     original_query=body.query,
@@ -596,20 +788,10 @@ def ask(
                     mode=body.mode,
                     action_result=action_result,
                 )
-    command = interpret_command(body.query)
+    command = pending_command or interpret_command(body.query)
     if command is not None or is_action_like_request(body.query):
         if command is None:
             command = BusinessCommand(intent=CommandIntent.CLARIFY)
-        mutating_intents = {
-            CommandIntent.CREATE_CUSTOMER,
-            CommandIntent.RECORD_CUSTOMER_PAYMENT,
-            CommandIntent.RECORD_SALE,
-            CommandIntent.RECORD_CREDIT_SALE,
-            CommandIntent.RECEIVE_STOCK,
-            CommandIntent.CREATE_PRODUCT,
-            CommandIntent.UPDATE_PRODUCT,
-            CommandIntent.TRANSFER_STOCK,
-        }
         needs_ai_details = (
             command.intent in {CommandIntent.CLARIFY, CommandIntent.UNSUPPORTED}
             or command.intent in {
@@ -634,7 +816,7 @@ def ask(
             } and not command.customer_query
             or command.intent == CommandIntent.CREATE_CUSTOMER and not command.customer_query
         )
-        if needs_ai_details and body.mode == "ai":
+        if needs_ai_details and body.mode == "ai" and pending_command is None:
             if not ai_is_configured():
                 raise HTTPException(status_code=503, detail="AI Assistant is not configured; use Normal Search or add the missing details.")
             try:
@@ -642,7 +824,7 @@ def ask(
             except AIProviderError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        if command.intent in mutating_intents and not idempotency_key:
+        if command.intent in _MUTATING_COMMANDS and not idempotency_key:
             raise HTTPException(status_code=400, detail="An Idempotency-Key header is required for business changes")
         if idempotency_key and (not idempotency_key.strip() or len(idempotency_key) > 120):
             raise HTTPException(status_code=422, detail="Idempotency-Key must contain 1 to 120 characters")
@@ -651,7 +833,7 @@ def ask(
             json.dumps({"query": body.query, "mode": body.mode}, sort_keys=True).encode("utf-8")
         ).hexdigest()
         existing = None
-        if command.intent in mutating_intents:
+        if command.intent in _MUTATING_COMMANDS:
             existing = session.scalar(
                 select(CommandRequest).where(
                     CommandRequest.business_id == business_id,
@@ -683,7 +865,30 @@ def ask(
                         action_result=result.get("action_result"),
                     )
                     if (
-                        command.intent in mutating_intents
+                        pending_command is not None
+                        and response.action_result is not None
+                        and conversation is not None
+                    ):
+                        session.delete(conversation)
+                    elif (
+                        command.intent in {
+                            CommandIntent.RECEIVE_STOCK,
+                            CommandIntent.RECORD_SALE,
+                            CommandIntent.RECORD_CREDIT_SALE,
+                            CommandIntent.CREATE_PRODUCT,
+                        }
+                        and response.clarification_required
+                        and "location" in response.message.casefold()
+                    ):
+                        _save_pending_assistant_action(
+                            session,
+                            business_id,
+                            auth_subject,
+                            body.conversation_id,
+                            command,
+                        )
+                    if (
+                        command.intent in _MUTATING_COMMANDS
                         and response.action_result is not None
                         and idempotency_key is not None
                     ):
@@ -719,6 +924,22 @@ def ask(
                     "AI Assistant is not configured. Set AI_PROVIDER, AI_MODEL, and "
                     "GROQ_API_KEY on the backend, or use Normal Search."
                 ),
+            )
+        if _is_general_advice_question(body.query):
+            try:
+                message = generate_assistant_response(body.query)
+            except AIProviderError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            return AskResponse(
+                intent="general_advice",
+                original_query=body.query,
+                locations=[],
+                candidates=[],
+                clarification_required=False,
+                message=message,
+                mode=body.mode,
+                provider=settings.ai_provider,
+                model=settings.ai_model,
             )
         try:
             interpretation = extract_product_query(body.query)

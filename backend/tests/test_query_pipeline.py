@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 import json
@@ -15,8 +16,9 @@ from app.ai_service import AIProviderError, extract_product_query
 from app.command_service import CommandIntent, interpret_command, is_action_like_request
 from app.formatting import format_quantity, format_quantity_label
 from app.inventory_metrics import is_low_stock, is_out_of_stock
-from app.main import app
+from app.main import app, optional_authenticated_subject
 from app.models import (
+    AssistantConversation,
     Business,
     Customer,
     CustomerLedgerEntry,
@@ -554,6 +556,246 @@ def test_voice_receipt_adds_stock_and_records_movement(client, session):
         StockMovement.business_id == BUSINESS_ID,
         StockMovement.movement_type == "purchase_receipt",
     )) == 1
+
+
+def test_location_clarification_persists_for_same_authenticated_conversation_only(
+    client, session, monkeypatch
+):
+    front_store = Location(
+        id=UUID("00000000-0000-0000-0000-000000000040"),
+        business_id=BUSINESS_ID,
+        name="Front Store",
+    )
+    duplicate_shelf = Location(
+        id=UUID("00000000-0000-0000-0000-000000000041"),
+        business_id=BUSINESS_ID,
+        parent_location_id=front_store.id,
+        name="Shelf 2",
+    )
+    session.add_all([front_store, duplicate_shelf])
+    session.commit()
+    subject = {"value": "owner-a"}
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        optional_authenticated_subject,
+        lambda: subject["value"],
+    )
+    conversation_id = "00000000-0000-4000-8000-000000000099"
+    headers = {"X-Dev-Token": "local-test-token"}
+
+    clarification = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "location-follow-up-start"},
+        json={
+            "query": "Add three packets of Amul Butter to stock",
+            "mode": "normal",
+            "conversation_id": conversation_id,
+        },
+    )
+
+    assert clarification.status_code == 200
+    assert clarification.json()["clarification_required"] is True
+    assert "location" in clarification.json()["message"].casefold()
+    session.expire_all()
+    pending = session.scalar(
+        select(AssistantConversation).where(
+            AssistantConversation.business_id == BUSINESS_ID,
+            AssistantConversation.auth_subject == "owner-a",
+        )
+    )
+    assert pending is not None
+    assert pending.pending_action["intent"] == "receive_stock"
+
+    subject["value"] = "owner-b"
+    unauthorized_follow_up = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "Storeroom Rack B Shelf 2", "conversation_id": conversation_id},
+    )
+    assert unauthorized_follow_up.status_code == 200
+    assert unauthorized_follow_up.json()["action_result"] is None
+
+    subject["value"] = "owner-a"
+    unrelated_follow_up = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "Shelf brackets", "conversation_id": conversation_id},
+    )
+    assert unrelated_follow_up.status_code == 200
+    assert unrelated_follow_up.json()["clarification_required"] is True
+    assert unrelated_follow_up.json()["action_result"] is None
+
+    completed = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "location-follow-up-complete"},
+        json={"query": "Storeroom Rack B Shelf 2", "conversation_id": conversation_id},
+    )
+
+    assert completed.status_code == 200
+    assert completed.json()["intent"] == "receive_stock"
+    assert completed.json()["action_result"]["balance"] == "23.000"
+    session.expire_all()
+    assert session.scalar(
+        select(InventoryBalance.quantity).where(
+            InventoryBalance.business_id == BUSINESS_ID,
+            InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
+            InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000012"),
+        )
+    ) == Decimal("23.000")
+    assert session.scalar(
+        select(AssistantConversation).where(
+            AssistantConversation.business_id == BUSINESS_ID,
+            AssistantConversation.auth_subject == "owner-a",
+        )
+    ) is None
+
+    from app.command_service import BusinessCommand
+
+    customer = Customer(
+        id=UUID("00000000-0000-0000-0000-000000000042"),
+        business_id=BUSINESS_ID,
+        name="Ramesh",
+    )
+    session.get(Product, UUID("00000000-0000-0000-0000-000000000020")).selling_price = Decimal("10")
+    session.add(customer)
+    session.commit()
+    monkeypatch.setattr(
+        "app.main.interpret_command",
+        lambda _query: BusinessCommand(
+            intent=CommandIntent.RECORD_CREDIT_SALE,
+            product_query="Amul Butter",
+            quantity=Decimal("1"),
+            customer_query="Ramesh",
+        ),
+    )
+    credit_sale_conversation = "00000000-0000-4000-8000-000000000097"
+    credit_sale_clarification = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "credit-sale-follow-up-start"},
+        json={
+            "query": "Record one Amul Butter on credit for Ramesh",
+            "conversation_id": credit_sale_conversation,
+        },
+    )
+    assert credit_sale_clarification.status_code == 200
+    assert credit_sale_clarification.json()["clarification_required"] is True
+    assert session.scalar(
+        select(AssistantConversation).where(
+            AssistantConversation.conversation_id == UUID(credit_sale_conversation),
+            AssistantConversation.auth_subject == "owner-a",
+        )
+    ).pending_action["intent"] == "record_credit_sale"
+
+    credit_sale = client.post(
+        "/api/v1/ask",
+        headers={**headers, "Idempotency-Key": "credit-sale-follow-up-complete"},
+        json={
+            "query": "Storeroom Rack B Shelf 2",
+            "conversation_id": credit_sale_conversation,
+        },
+    )
+    assert credit_sale.status_code == 200
+    assert credit_sale.json()["intent"] == "record_credit_sale"
+    assert credit_sale.json()["action_result"]["sale_id"]
+    assert session.scalar(
+        select(func.count(Sale.id)).where(
+            Sale.business_id == BUSINESS_ID,
+            Sale.id == UUID(credit_sale.json()["action_result"]["sale_id"]),
+        )
+    ) == 1
+    sale = session.get(Sale, UUID(credit_sale.json()["action_result"]["sale_id"]))
+    assert sale.customer_id == customer.id
+    assert session.scalar(
+        select(func.count(CustomerLedgerEntry.id)).where(
+            CustomerLedgerEntry.business_id == BUSINESS_ID,
+            CustomerLedgerEntry.customer_id == customer.id,
+        )
+    ) == 1
+
+
+def test_assistant_requests_purge_expired_clarification_state(client, session):
+    conversation_id = UUID("00000000-0000-4000-8000-000000000098")
+    conversation = AssistantConversation(
+        business_id=BUSINESS_ID,
+        auth_subject="expired-owner",
+        conversation_id=conversation_id,
+        pending_action={"intent": "receive_stock"},
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    session.add(conversation)
+    session.commit()
+
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "Amul Butter?"},
+    )
+
+    assert response.status_code == 200
+    session.expire_all()
+    assert session.scalar(
+        select(AssistantConversation).where(
+            AssistantConversation.conversation_id == conversation_id,
+        )
+    ) is None
+
+
+def test_ai_mode_answers_general_questions_without_business_mutations(client, session, monkeypatch):
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+    observed = {}
+
+    def answer(question, *, verified_context=None):
+        observed["question"] = question
+        observed["context"] = verified_context
+        return "Try one small, measurable change and review the result next week."
+
+    monkeypatch.setattr("app.main.generate_assistant_response", answer)
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "How can I improve customer retention?", "mode": "ai"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "general_advice"
+    assert response.json()["message"].startswith("Try one small")
+    assert observed == {
+        "question": "How can I improve customer retention?",
+        "context": None,
+    }
+    assert session.scalar(select(func.count(Sale.id)).where(Sale.business_id == BUSINESS_ID)) == 0
+
+
+def test_ai_sales_advice_preserves_database_facts_and_adds_suggestions(client, session, monkeypatch):
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+    observed = {}
+
+    def answer(question, *, verified_context=None):
+        observed["question"] = question
+        observed["context"] = verified_context
+        return "Try one promotion for a week and compare the results."
+
+    monkeypatch.setattr("app.main.generate_assistant_response", answer)
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token"},
+        json={"query": "How can I improve sales?", "mode": "ai"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "business_insight"
+    assert response.json()["message"].startswith("There is not enough recorded sales history")
+    assert "Suggestions: Try one promotion" in response.json()["message"]
+    assert observed["question"] == "How can I improve sales?"
+    assert set(observed["context"]) <= {
+        "current_period",
+        "previous_period",
+        "top_products",
+        "restock_candidates",
+        "daily_trend",
+    }
+    assert "recommendations_are_general" not in observed["context"]
+    assert session.scalar(select(func.count(Sale.id)).where(Sale.business_id == BUSINESS_ID)) == 0
 
 
 def test_add_to_inventory_phrase_receives_stock_once_with_saved_unit(client, session):

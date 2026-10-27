@@ -1,17 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { PublicHeader } from "./public-header";
 import { getSupabaseBrowserClient } from "../lib/supabase/client";
+import { getAuthErrorMessage } from "../lib/auth-errors.mjs";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const submittingRef = useRef(false);
+  const redirectPathRef = useRef<string | null>(null);
+  const redirectTimeoutRef = useRef<number | null>(null);
   const isSignup = mode === "signup";
 
   useEffect(() => {
@@ -20,15 +25,25 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     }
   }, []);
 
+  useEffect(() => {
+    if (redirectPathRef.current === pathname) {
+      if (redirectTimeoutRef.current !== null) window.clearTimeout(redirectTimeoutRef.current);
+      redirectPathRef.current = null;
+      redirectTimeoutRef.current = null;
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }, [pathname]);
+
+  useEffect(() => () => {
+    if (redirectTimeoutRef.current !== null) window.clearTimeout(redirectTimeoutRef.current);
+  }, []);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) return;
     setError("");
     setMessage("");
-    const client = getSupabaseBrowserClient();
-    if (!client) {
-      setError("Authentication is not configured. Add the Supabase project URL and public key to frontend/.env.local.");
-      return;
-    }
     const values = new FormData(event.currentTarget);
     const email = String(values.get("email") ?? "").trim();
     const password = String(values.get("password") ?? "");
@@ -37,8 +52,15 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       setError("Passwords do not match. Check both fields and try again.");
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
+    let redirecting = false;
     try {
+      const client = getSupabaseBrowserClient();
+      if (!client) {
+        setError("Authentication is not configured. Add the Supabase project URL and public key to frontend/.env.local.");
+        return;
+      }
       const result = isSignup
         ? await client.auth.signUp({
           email,
@@ -47,30 +69,33 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         })
         : await client.auth.signInWithPassword({ email, password });
       if (result.error) {
-        const normalizedError = result.error.message.toLocaleLowerCase();
-        setError(
-          normalizedError.includes("invalid login credentials")
-            ? "The email or password is incorrect. Check your details and try again."
-            : normalizedError.includes("email not confirmed")
-              ? "Verify your email before logging in."
-              : normalizedError.includes("too many requests")
-                ? "Too many attempts. Wait a moment and try again."
-                : isSignup && normalizedError.includes("already registered")
-                  ? "An account already exists for this email. Try logging in instead."
-                  : isSignup
-                    ? "Your account could not be created. Check your details and try again."
-                    : "You could not be signed in. Check your details and try again.",
-        );
+        setError(getAuthErrorMessage(result.error, mode));
       } else if (isSignup && !result.data.session) {
         setMessage("Check your email to verify your account, then return here to log in.");
       } else {
-        router.replace(isSignup ? "/onboarding" : "/dashboard");
+        const destination = isSignup ? "/onboarding" : "/dashboard";
+        redirectPathRef.current = destination;
+        redirecting = true;
+        router.replace(destination);
         router.refresh();
+        redirectTimeoutRef.current = window.setTimeout(() => {
+          if (redirectPathRef.current !== destination) return;
+          redirectPathRef.current = null;
+          redirectTimeoutRef.current = null;
+          submittingRef.current = false;
+          setSubmitting(false);
+          setError("Your account is signed in, but the next page did not open. Try again or refresh the page.");
+        }, 15_000);
       }
     } catch {
+      redirecting = false;
+      redirectPathRef.current = null;
       setError("Authentication could not be completed. Check your connection and try again.");
     } finally {
-      setSubmitting(false);
+      if (!redirecting) {
+        submittingRef.current = false;
+        setSubmitting(false);
+      }
     }
   }
 
@@ -135,8 +160,9 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           )}
           {error && <p className="auth-error" role="alert">{error}</p>}
           {message && <p className="auth-message" role="status">{message}</p>}
-          <button className="button button-primary auth-submit" disabled={submitting} type="submit">
-            {submitting ? "Please wait…" : isSignup ? "Create account" : "Log In"}
+          <button className="button button-primary auth-submit" aria-busy={submitting} disabled={submitting} type="submit">
+            {submitting && <span className="auth-spinner" aria-hidden="true" />}
+            {submitting ? isSignup ? "Creating your account…" : "Signing you in…" : isSignup ? "Create account" : "Log In"}
           </button>
         </form>
         {isSignup && (

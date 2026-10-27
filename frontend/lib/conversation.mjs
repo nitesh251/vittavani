@@ -10,3 +10,16 @@ export function contextualizeFollowUp(query, productName) {
   if (!cleanQuery || !cleanProduct || !followUpSale.test(cleanQuery)) return cleanQuery;
   return `${cleanQuery.replace(/[.!?]+$/, "")} ${cleanProduct}`;
 }
+
+export function getOrCreateConversationId(storage, ownerId, createId) {
+  const key = `vittavani-assistant:${ownerId}`;
+  try {
+    const saved = storage.getItem(key);
+    if (saved && /^[0-9a-f-]{36}$/i.test(saved)) return saved;
+    const conversationId = createId();
+    storage.setItem(key, conversationId);
+    return conversationId;
+  } catch {
+    return createId();
+  }
+}

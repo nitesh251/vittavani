@@ -11,6 +11,7 @@ from app.ai_service import (
     _MAX_LOG_DETAIL_LENGTH,
     extract_business_command,
     extract_product_query,
+    generate_assistant_response,
 )
 from app.config import Settings
 
@@ -329,3 +330,41 @@ def test_business_command_ai_rejects_unimplemented_intents(configured_ai, monkey
 
     with pytest.raises(AIProviderError, match="invalid command"):
         extract_business_command("delete all products")
+
+
+def test_assistant_response_uses_verified_context_and_validates_structured_output(
+    configured_ai, monkeypatch
+):
+    observed = {}
+    content = json.dumps({"response": "Recorded sales are flat; test one promotion and compare next week."})
+    provider_body = json.dumps(
+        {"choices": [{"message": {"content": content}}]}
+    ).encode()
+
+    def mock_urlopen(request, timeout):
+        observed["request"] = json.loads(request.data)
+        return BytesIO(provider_body)
+
+    monkeypatch.setattr("app.ai_service.urlopen", mock_urlopen)
+    verified_context = {"current_period": {"sale_count": 2, "total_amount": "120.00"}}
+
+    response = generate_assistant_response(
+        "How can I improve sales?",
+        verified_context=verified_context,
+    )
+
+    assert response == "Recorded sales are flat; test one promotion and compare next week."
+    prompt = observed["request"]["messages"]
+    assert json.dumps(verified_context, ensure_ascii=False, separators=(",", ":")) in prompt[1]["content"]
+    assert "Do not return SQL" in prompt[0]["content"]
+    assert observed["request"]["response_format"] == {"type": "json_object"}
+
+
+def test_assistant_response_rejects_empty_or_non_string_content(configured_ai, monkeypatch):
+    provider_body = json.dumps(
+        {"choices": [{"message": {"content": json.dumps({"response": " "})}}]}
+    ).encode()
+    monkeypatch.setattr("app.ai_service.urlopen", lambda *_args, **_kwargs: BytesIO(provider_body))
+
+    with pytest.raises(AIProviderError, match="invalid response"):
+        generate_assistant_response("How should I improve my shop?")

@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { compareDecimalStrings, formatQuantityWithUnit } from "../lib/quantity.mjs";
-import { contextualizeFollowUp } from "../lib/conversation.mjs";
+import { contextualizeFollowUp, getOrCreateConversationId } from "../lib/conversation.mjs";
 import { getDashboardInsightsState } from "../lib/dashboard-insights.mjs";
 import {
   getDisplayName,
@@ -396,6 +396,7 @@ export default function Home() {
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const businessProfileUserIdRef = useRef<string | null>(null);
+  const assistantConversationIdRef = useRef<string | null>(null);
   const [productSearch, setProductSearch] = useState("");
   const [productStatusFilter, setProductStatusFilter] = useState("all");
   const [productSort, setProductSort] = useState("name");
@@ -1100,6 +1101,13 @@ export default function Home() {
     const requestQuery = contextualizeFollowUp(originalQuery, activeProductContextRef.current);
     const requestKey = options.requestKey ?? window.crypto.randomUUID();
     const requestMode = options.requestMode ?? assistantMode;
+    if (!assistantConversationIdRef.current) {
+      assistantConversationIdRef.current = getOrCreateConversationId(
+        window.sessionStorage,
+        "active-tab",
+        () => window.crypto.randomUUID(),
+      );
+    }
     loadingRef.current = true;
     setLoading(true);
     if (!options.keepComposer) setQuery("");
@@ -1115,7 +1123,11 @@ export default function Home() {
       const response = await fetch("/api/v1/ask", {
         method: "POST",
         headers: { ...headers, "Idempotency-Key": requestKey },
-        body: JSON.stringify({ query: requestQuery, mode: requestMode }),
+        body: JSON.stringify({
+          query: requestQuery,
+          mode: requestMode,
+          conversation_id: assistantConversationIdRef.current,
+        }),
       });
       if (!response.ok) {
         throw new Error(await apiError(response, "Could not reach Vittavani. Check that the API is running."));

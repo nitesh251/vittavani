@@ -304,3 +304,58 @@ def extract_product_query(question: str) -> dict[str, str | None]:
         "intent": intent,
         "product_query": product_query.strip() if product_query else None,
     }
+
+
+def generate_assistant_response(
+    question: str,
+    *,
+    verified_context: dict[str, object] | None = None,
+) -> str:
+    context = json.dumps(verified_context or {}, ensure_ascii=False, separators=(",", ":"))
+    response_body = _request_groq_completion(
+        {
+            "model": settings.ai_model,
+            "temperature": 0.3,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Vittavani, a practical business assistant. Answer general questions with "
+                        "helpful, concise advice. For business questions, use only the verified facts in the "
+                        "provided context; never invent sales, products, locations, customers, or balances. "
+                        "Clearly separate verified facts from recommendations or hypotheses. Do not claim "
+                        "that any action was completed. Do not return SQL, request secrets, or expose personal "
+                        "data. Match the user's language when practical. Return one JSON object with a single "
+                        "string field named response."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Question: {question}\n\nVerified business facts (may be empty): {context}"
+                    ),
+                },
+            ],
+        }
+    )
+    try:
+        if len(response_body) > _MAX_PROVIDER_RESPONSE_BYTES:
+            raise ValueError("response too large")
+        payload = json.loads(response_body)
+        content = payload["choices"][0]["message"]["content"]
+        structured = json.loads(content)
+        response = structured["response"]
+        if (
+            not isinstance(response, str)
+            or not response.strip()
+            or len(response) > 3_000
+            or any(ord(char) < 32 and char not in "\n\t" for char in response)
+        ):
+            raise ValueError("invalid response text")
+        return response.strip()
+    except (AttributeError, KeyError, IndexError, TypeError, UnicodeDecodeError, ValueError) as exc:
+        _log_provider_error("malformed_response", detail=type(exc).__name__)
+        raise AIProviderError(
+            "AI Assistant returned an invalid response. Try again or use Normal Search."
+        ) from exc
