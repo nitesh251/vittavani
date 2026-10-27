@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PublicHeader } from "../components/public-header";
+import { PublicFooter } from "../components/public-footer";
 
 const features = [
   {
@@ -70,9 +71,10 @@ const faqs = [
 
 export default function HomePage() {
   return (
-    <main className="public-page">
+    <div className="public-page">
       <PublicHeader />
 
+      <main className="public-main">
       <section className="public-hero" aria-labelledby="hero-heading">
         <div className="public-hero-copy">
           <p className="public-eyebrow"><span className="public-eyebrow-mark" aria-hidden="true">✦</span> A product of Vinayaka Services</p>
@@ -217,11 +219,8 @@ export default function HomePage() {
         </div>
         <Link className="button button-primary" href="/signup">Create your workspace <span aria-hidden="true">→</span></Link>
       </section>
-      <footer className="public-footer">
-        <span>Vittavani · A product of Vinayaka Services</span>
-        <nav aria-label="Footer navigation"><Link href="#features">Features</Link><Link href="#faq">FAQ</Link><Link href="/login">Log In</Link></nav>
-        <span>Built for small businesses, wholesalers, and retailers.</span>
-      </footer>
-    </main>
+      </main>
+      <PublicFooter />
+    </div>
   );
 }

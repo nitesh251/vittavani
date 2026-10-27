@@ -81,6 +81,22 @@ This phase unified the shared public, authentication, onboarding, and authentica
 | Backend regression tests | **Not rerun** | This phase changed frontend styling and frontend tests only. |
 | GitHub Actions | **Pending** | Run `40543298250` was in progress on pre-change commit `b3d4f8c`; the job-log endpoint returned 404 while the run was active, so it does not validate this phase. |
 
+## Phase-five results
+
+This phase addressed public/auth theme inconsistencies by sharing the public footer, applying the palette to actual rendered homepage and auth surfaces, and aligning the dashboard footer treatment. The root causes were the inline homepage-only footer, no footer on Login/Signup, a separately light-styled dashboard footer, and public decorative color aliases that still resolved to purple/amber. Authentication logic, route destinations, and dashboard layout remain unchanged.
+
+Files changed: `frontend/app/globals.css`, `frontend/app/page.tsx`, `frontend/components/auth-form.tsx`, new `frontend/components/public-footer.tsx`, `frontend/tests/global-theme.test.mjs`, and this report.
+
+| Area | Result | Evidence and limits |
+| --- | --- | --- |
+| Shared header/footer components | **Passed** | Homepage and Login/Signup render the shared `PublicHeader`; homepage and both auth routes render the new `PublicFooter`. Footer links resolve to the homepage Features/FAQ anchors and `/login`. |
+| Theme and layout regression tests | **Passed** | 44 frontend Node tests passed, including global tokens, public/auth component reuse, footer surfaces, primary action colors, mobile rules, and reduced motion. |
+| TypeScript and production build | **Passed** | `npm run lint` and `npm run build` passed; all nine routes generated. |
+| Public/auth browser review | **Passed** | Homepage, Login, and Signup were inspected at 390px and 1440px. The rendered document had no horizontal overflow; header CTA/auth submit computed to `rgb(3, 105, 161)`, and footer to Midnight Navy `rgb(20, 45, 78)`. The auth footer reached the bottom of the short desktop viewport. Homepage mobile navigation retained its links. |
+| Authenticated dashboard browser review | **Blocked** | `/dashboard` redirected to Login without a Supabase session. The shared dashboard footer CSS was checked, but authenticated dashboard pages were not visually exercised. |
+| Dependency audit | **Passed** | `npm ci` reported zero vulnerabilities; package manifests and lockfiles were not changed. |
+| GitHub Actions | **Pending** | Run `40548846869` was in progress on the pre-change commit `ed11a19`; the active job-log endpoint returned 404, so it does not validate this phase. |
+
 ## Manual checks required when service access is available
 
 ### Supabase authentication

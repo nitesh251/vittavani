@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { PublicHeader } from "./public-header";
+import { PublicFooter } from "./public-footer";
 import { getSupabaseBrowserClient } from "../lib/supabase/client";
 import { getAuthErrorMessage } from "../lib/auth-errors.mjs";
 
@@ -100,7 +101,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <>
+    <div className="public-page public-auth-layout">
       <PublicHeader variant={isSignup ? "signup" : "login"} />
       <main className="auth-page auth-page-auth">
         <section className="signup-intro" aria-label="About Vittavani">
@@ -175,6 +176,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         <Link className="auth-home-link" href="/">Back to home</Link>
         </section>
       </main>
-    </>
+      <PublicFooter />
+    </div>
   );
 }
