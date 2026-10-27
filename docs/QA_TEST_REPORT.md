@@ -1,12 +1,12 @@
 # Vittavani QA Test Report
 
 **Updated:** 2026-10-27  
-**Phase:** Focused second-phase QA  
+**Phase:** Focused and regression QA
 **Repository:** `nitesh251/vittavani`
 
 ## Scope and report history
 
-This phase focused on Supabase authentication readiness, tenant isolation at the backend authorization boundary, Groq availability and failure handling, and speech-input behavior.
+This report covers focused QA of Supabase authentication readiness, tenant isolation, Groq availability and failure handling, speech-input behavior, and the later frontend theme-consistency pass.
 
 The requested prior `docs/QA_TEST_REPORT.md` was not present in the checkout when this phase began. The first-phase summary below is preserved from the earlier QA handoff; phase-two results were run in this checkout.
 
@@ -67,6 +67,19 @@ This phase covers the authenticated header color, login redirect/loading behavio
 | Supabase/browser integration | **Not run** | Hosted authentication and browser-based verification were unavailable. |
 | Dependency audit | **Passed** | `npm ci` reported zero vulnerabilities; no dependencies were added. |
 | GitHub Actions | **Pending** | Run `40532073717` was still in progress on the pre-change commit `b2a4c52`; it does not validate this phase's changes. |
+
+## Phase-four results
+
+This phase unified the shared public, authentication, onboarding, and authenticated-workspace color tokens and control states without changing page structure or application behavior.
+
+| Area | Result | Evidence and limits |
+| --- | --- | --- |
+| Frontend regression tests | **Passed** | 43 Node tests passed, including global palette/alias, navy workspace header/sidebar, blue CTA, shared error states, and responsive/reduced-motion assertions. |
+| TypeScript check and production build | **Passed** | `npm run lint` and `npm run build` passed from `frontend/`; all nine pages generated successfully. |
+| Dependency audit | **Passed** | `npm ci` installed the existing lockfile dependencies and reported zero vulnerabilities; no dependency files changed. |
+| Browser visual review | **Not performed** | This phase was validated with CSS and responsive-rule regression assertions; no authenticated desktop/mobile browser screenshot review was completed. |
+| Backend regression tests | **Not rerun** | This phase changed frontend styling and frontend tests only. |
+| GitHub Actions | **Pending** | Run `40543298250` was in progress on pre-change commit `b3d4f8c`; the job-log endpoint returned 404 while the run was active, so it does not validate this phase. |
 
 ## Manual checks required when service access is available
 
