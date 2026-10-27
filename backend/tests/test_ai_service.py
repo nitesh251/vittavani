@@ -41,6 +41,7 @@ def http_error(status: int, body: str) -> HTTPError:
     ("status", "category", "user_message", "provider_message"),
     [
         (401, "authentication", "API credentials", "Invalid API key"),
+        (403, "authentication", "API credentials", "Forbidden"),
         (404, "model_or_request", "AI_MODEL", "model_not_found"),
         (429, "rate_limit", "rate limit or quota", "rate_limit_exceeded"),
     ],
