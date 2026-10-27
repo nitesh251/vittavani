@@ -97,6 +97,18 @@ Files changed: `frontend/app/globals.css`, `frontend/app/page.tsx`, `frontend/co
 | Dependency audit | **Passed** | `npm ci` reported zero vulnerabilities; package manifests and lockfiles were not changed. |
 | GitHub Actions | **Pending** | Run `40548846869` was in progress on the pre-change commit `ed11a19`; the active job-log endpoint returned 404, so it does not validate this phase. |
 
+## Phase-six results
+
+The shared public header was visibly white on the Homepage, Login, and Signup routes. This phase changes its rendered background to Midnight Navy, with high-contrast white branding, pale navigation links, cyan hover/focus accents, and the existing blue primary CTA retained. The existing responsive mobile-menu behavior and all destinations are unchanged.
+
+| Area | Result | Evidence and limits |
+| --- | --- | --- |
+| Shared header regression tests | **Passed** | Tests assert the navy header surface, white brand, light links, cyan hover, white mobile-menu trigger, and the unchanged blue primary action. |
+| Frontend tests | **Passed** | 44 Node tests passed. |
+| TypeScript and production build | **Passed** | `npm run lint` and `npm run build` passed; all nine routes generated. |
+| Browser verification | **Passed** | Homepage and Login were inspected at 390px/1440px; Signup at desktop. Computed header background was `rgb(20, 45, 78)`, brand white, navigation `rgb(224, 242, 254)`, and existing CTA `rgb(3, 105, 161)`. No horizontal overflow was observed. |
+| Dependencies | **Passed** | `npm ci` used the existing lockfile and reported zero vulnerabilities; no dependency files changed. |
+
 ## Manual checks required when service access is available
 
 ### Supabase authentication
