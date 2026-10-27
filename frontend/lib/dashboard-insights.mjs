@@ -1,3 +1,5 @@
+import { formatQuantityWithUnit } from "./quantity.mjs";
+
 function formatCurrency(amount, currency) {
   try {
     return new Intl.NumberFormat("en-IN", {
@@ -26,7 +28,7 @@ function movementInsight(movement, timeZone) {
   if (movement.movement_type === "purchase_receipt") {
     return {
       title: "Stock receipt recorded",
-      detail: `${movement.display_quantity} of ${movement.product_name} was received${dateLabel}.`,
+      detail: `Received ${movement.display_quantity} of ${movement.product_name}${dateLabel}.`,
       action: "View stock movements",
       href: "#stock-movements",
       icon: "↓",
@@ -36,7 +38,7 @@ function movementInsight(movement, timeZone) {
   if (movement.movement_type === "sale") {
     return {
       title: "Sale recorded",
-      detail: `${movement.display_quantity} of ${movement.product_name} was recorded as sold${dateLabel}.`,
+      detail: `Sold ${movement.display_quantity} of ${movement.product_name}${dateLabel}.`,
       action: "View sales history",
       href: "#sales",
       icon: "↗",
@@ -86,7 +88,7 @@ export function getDashboardInsightsState({ loading, error, dashboard }) {
   if (topProduct) {
     insights.push({
       title: "Top-selling product · 7 days",
-      detail: `${topProduct.name} led recorded quantity with ${topProduct.quantity} ${topProduct.unit} sold.`,
+      detail: `${topProduct.name} led recorded quantity with ${formatQuantityWithUnit(topProduct.quantity, topProduct.unit)} sold.`,
       action: "View sales history",
       href: "#sales",
       icon: "★",

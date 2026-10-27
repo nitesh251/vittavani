@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { compareDecimalStrings } from "../lib/quantity.mjs";
+import { compareDecimalStrings, formatQuantityWithUnit } from "../lib/quantity.mjs";
 import { contextualizeFollowUp } from "../lib/conversation.mjs";
 import { getDashboardInsightsState } from "../lib/dashboard-insights.mjs";
 import {
@@ -1674,7 +1674,7 @@ export default function Home() {
                 <span>Items sold today</span>
                 <strong>
                   {salesOverview.today.quantity_by_unit.length
-                    ? salesOverview.today.quantity_by_unit.map((item) => `${item.quantity} ${item.unit}`).join(" · ")
+                    ? salesOverview.today.quantity_by_unit.map((item) => formatQuantityWithUnit(item.quantity, item.unit)).join(" · ")
                     : "0"}
                 </strong>
               </article>
@@ -1714,7 +1714,7 @@ export default function Home() {
                     {salesOverview.top_products.map((product) => (
                       <li key={product.product_id}>
                         <strong>{product.name}</strong>
-                        <span className="stock-quantity">{product.quantity} {product.unit}</span>
+                        <span className="stock-quantity">{formatQuantityWithUnit(product.quantity, product.unit)}</span>
                       </li>
                     ))}
                   </ol>

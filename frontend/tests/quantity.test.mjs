@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { compareDecimalStrings } from "../lib/quantity.mjs";
+import { compareDecimalStrings, formatQuantityWithUnit } from "../lib/quantity.mjs";
 
 test("compares large decimal quantities without floating-point loss", () => {
   assert.equal(compareDecimalStrings("9007199254740993.001", "9007199254740993.000"), 1);
@@ -28,4 +28,12 @@ test("falls back safely for non-decimal representations", () => {
   assert.equal(compareDecimalStrings("1", "invalid"), -1);
   assert.equal(compareDecimalStrings("invalid", "1"), 1);
   assert.equal(compareDecimalStrings("invalid", "also-invalid"), 1);
+});
+
+test("formats singular, plural, irregular, and fixed quantity units", () => {
+  assert.equal(formatQuantityWithUnit("1", "piece"), "1 piece");
+  assert.equal(formatQuantityWithUnit("2", "piece"), "2 pieces");
+  assert.equal(formatQuantityWithUnit("1.000", "boxes"), "1.000 box");
+  assert.equal(formatQuantityWithUnit("2", "box"), "2 boxes");
+  assert.equal(formatQuantityWithUnit("2", "kg"), "2 kg");
 });

@@ -55,7 +55,22 @@ test("sales and recent movements produce concise, data-backed insights", () => {
   assert.equal(state.insights.length, 3);
   assert.match(state.insights[0].detail, /₹500\.00/);
   assert.match(state.insights[1].detail, /3 pieces sold/);
-  assert.match(state.insights[2].detail, /4 pieces of Mouse was received on/);
+  assert.match(state.insights[2].detail, /Received 4 pieces of Mouse on/);
+});
+
+test("sale movement insights use a concise factual sentence", () => {
+  const state = getDashboardInsightsState({
+    dashboard: dashboard({
+      recent_stock_activity: [{
+        movement_type: "sale",
+        product_name: "Keyboard",
+        display_quantity: "2 pieces",
+        created_at: "2026-10-24T08:00:00Z",
+      }],
+    }),
+  });
+
+  assert.equal(state.insights[0].detail, "Sold 2 pieces of Keyboard on 24 Oct 2026.");
 });
 
 test("insufficient sales periods are not presented as a comparison", () => {
