@@ -31,10 +31,17 @@ def signing_keys():
     return private_key, private_key.public_key()
 
 
-def make_token(private_key, *, issuer="https://project.example/auth/v1", audience="authenticated", exp=None):
+def make_token(
+    private_key,
+    *,
+    subject="auth-user-1",
+    issuer="https://project.example/auth/v1",
+    audience="authenticated",
+    exp=None,
+):
     return jwt.encode(
         {
-            "sub": "auth-user-1",
+            "sub": subject,
             "iss": issuer,
             "aud": audience,
             "exp": exp or datetime.now(UTC) + timedelta(minutes=5),
@@ -82,7 +89,7 @@ def test_malformed_supabase_token_returns_unauthorized_without_fetching_jwks():
     assert error.value.status_code == 401
 
 
-def test_authenticated_business_scope_ignores_untrusted_business_query(database, monkeypatch):
+def test_authenticated_business_scope_ignores_untrusted_business_query(database, monkeypatch, signing_keys):
     own_business = Business(name="My Shop")
     other_business = Business(name="Other Shop")
     database.add_all([own_business, other_business])
@@ -97,7 +104,18 @@ def test_authenticated_business_scope_ignores_untrusted_business_query(database,
         ]
     )
     database.commit()
-    monkeypatch.setattr(main, "_bearer_subject", lambda _authorization: "owner-a")
+    private_key, public_key = signing_keys
+
+    class TestJwkClient:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def get_signing_key_from_jwt(self, _token):
+            return SimpleNamespace(key=public_key)
+
+    monkeypatch.setattr(auth, "PyJWKClient", TestJwkClient)
+    monkeypatch.setattr(main.settings, "supabase_url", "https://project.example")
+    access_token = make_token(private_key, subject="owner-a")
 
     def override_db():
         yield database
@@ -108,12 +126,12 @@ def test_authenticated_business_scope_ignores_untrusted_business_query(database,
         with TestClient(main.app) as client:
             response = client.get(
                 "/api/v1/products",
-                headers={"Authorization": "Bearer " + "test-access-token"},
+                headers={"Authorization": "Bearer " + access_token},
                 params={"business_id": str(other_business.id)},
             )
             mutation_response = client.put(
                 f"/api/v1/products/{other_product.id}",
-                headers={"Authorization": "Bearer " + "test-access-token"},
+                headers={"Authorization": "Bearer " + access_token},
                 json={"name": "Hijacked product"},
             )
     finally:

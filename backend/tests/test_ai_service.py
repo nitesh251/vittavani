@@ -215,6 +215,22 @@ def test_provider_rejects_malformed_structured_content(configured_ai, monkeypatc
     assert "category=malformed_response" in caplog.text
 
 
+@pytest.mark.parametrize(
+    "provider_response",
+    [b"", json.dumps({"choices": []}).encode()],
+)
+def test_provider_rejects_empty_response(configured_ai, monkeypatch, caplog, provider_response):
+    monkeypatch.setattr(
+        "app.ai_service.urlopen",
+        lambda *_args, **_kwargs: BytesIO(provider_response),
+    )
+
+    with pytest.raises(AIProviderError, match="invalid response"):
+        extract_product_query("How much stock is left?")
+
+    assert "category=malformed_response" in caplog.text
+
+
 def test_provider_sends_structured_output_and_caps_configured_timeout(
     configured_ai, monkeypatch, caplog
 ):
