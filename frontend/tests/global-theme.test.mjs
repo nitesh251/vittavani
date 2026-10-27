@@ -36,6 +36,11 @@ test("global design tokens match the application palette and public aliases", ()
 test("shared public, auth, onboarding, and workspace controls use the design tokens", () => {
   assert.match(css, /\.topbar\s*\{[^}]*background:\s*var\(--navy\)/s);
   assert.match(css, /\.sidebar\s*\{[^}]*background:\s*var\(--navy\)/s);
+  assert.match(css, /\.public-header\s*\{[^}]*background: var\(--navy\);[^}]*color: var\(--card\)/s);
+  assert.match(css, /\.public-header \.public-brand\s*\{[^}]*color: var\(--card\)/s);
+  assert.match(css, /\.public-nav a, \.public-login-link\s*\{[^}]*color: #e0f2fe/s);
+  assert.match(css, /\.public-nav a:hover, \.public-login-link:hover\s*\{[^}]*color: #67e8f9/s);
+  assert.match(css, /\.public-mobile-menu > summary\s*\{[^}]*color: var\(--card\)/s);
   assert.match(css, /\.sidebar-nav a\.nav-active\s*\{[^}]*background:\s*var\(--action-blue\)/s);
   assert.match(css, /\.button-primary\s*\{[^}]*background:\s*var\(--action-blue\)/s);
   assert.match(css, /\.auth-page \.auth-brand \.public-brand-mark\s*\{[^}]*background:\s*var\(--navy\)/s);
