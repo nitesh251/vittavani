@@ -33,6 +33,7 @@ from app.models import (
     SupplierPurchase,
 )
 from app.query_service import lookup_product
+from app.query_understanding import Intent, understand_query
 
 BUSINESS_ID = UUID("00000000-0000-0000-0000-000000000001")
 OTHER_BUSINESS_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -87,6 +88,48 @@ def test_common_english_and_hinglish_inventory_commands(query, intent, product, 
     assert command.quantity == quantity
     assert command.unit == unit
     assert is_action_like_request(query)
+
+
+@pytest.mark.parametrize(
+    ("question", "intent", "entity"),
+    [
+        ("Where did I keep Amul Butter?", Intent.LOCATION, "amul butter"),
+        ("Where do we store Amul Butter?", Intent.LOCATION, "amul butter"),
+        ("How much stock do I have for Amul Butter?", Intent.STOCK, "amul butter"),
+        ("Show me products running low", Intent.LOW_STOCK, ""),
+        ("Which items are out of stock?", Intent.OUT_OF_STOCK, ""),
+        ("कितना अमूल बटर बचा है?", Intent.STOCK, "अमूल बटर"),
+        ("अमूल बटर स्टॉक कितना है?", Intent.STOCK, "अमूल बटर"),
+    ],
+)
+def test_conversational_inventory_question_scenarios(question, intent, entity):
+    query = understand_query(question)
+
+    assert query.intent == intent
+    assert query.entity_query == entity
+
+
+@pytest.mark.parametrize(
+    ("question", "intent", "entity", "quantity"),
+    [
+        ("मैंने 3 कीबोर्ड खरीदे", CommandIntent.RECEIVE_STOCK, "कीबोर्ड", Decimal("3")),
+        ("रमेश ने २०० रुपये दिए", CommandIntent.RECORD_CUSTOMER_PAYMENT, "रमेश", Decimal("200")),
+        ("Ramesh gave me ₹500", CommandIntent.RECORD_CUSTOMER_PAYMENT, "ramesh", Decimal("500")),
+        ("How much does Ramesh owe me?", CommandIntent.CUSTOMER_BALANCE_QUERY, "ramesh", None),
+    ],
+)
+def test_conversational_customer_and_hindi_action_scenarios(question, intent, entity, quantity):
+    command = interpret_command(question)
+
+    assert command is not None
+    assert command.intent == intent
+    if intent in {CommandIntent.CUSTOMER_BALANCE_QUERY, CommandIntent.RECORD_CUSTOMER_PAYMENT}:
+        assert command.customer_query == entity
+        if intent == CommandIntent.RECORD_CUSTOMER_PAYMENT:
+            assert command.amount == quantity
+    else:
+        assert command.product_query == entity
+        assert command.quantity == quantity
 
 
 @pytest.fixture

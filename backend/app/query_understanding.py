@@ -11,6 +11,7 @@ class Intent(StrEnum):
     LOCATION = "product_location"
     STOCK = "stock_quantity"
     LOW_STOCK = "low_stock_report"
+    OUT_OF_STOCK = "out_of_stock_report"
     PRODUCT_SEARCH = "product_search"
     UNKNOWN = "unknown"
 
@@ -41,14 +42,38 @@ class Resolution:
 _LOW_STOCK_PHRASES = (
     "show low stock items",
     "low stock",
+    "low on stock",
+    "running low",
+    "nearly out of stock",
+    "almost out of stock",
     "कम स्टॉक",
     "कम सामान",
     "कम बचा",
+    "कम हो रहा है",
+)
+_OUT_OF_STOCK_PHRASES = (
+    "out of stock",
+    "no stock",
+    "zero stock",
+    "nothing left",
+    "sold out",
+    "stock khatam",
+    "stock khatm",
+    "स्टॉक खत्म",
+    "स्टॉक ख़त्म",
+    "कुछ नहीं बचा",
 )
 _LOCATION_PHRASES = (
     "where is",
     "where are",
     "where can i find",
+    "where did i keep",
+    "where did we keep",
+    "where have i kept",
+    "where have we kept",
+    "where do i store",
+    "where do we store",
+    "where is it kept",
     "kahan rakha hai",
     "kahan rakha",
     "kahan hai",
@@ -67,6 +92,14 @@ _LOCATION_PHRASES = (
     "वेयर इस",
 )
 _STOCK_PHRASES = (
+    "how much stock do i have for",
+    "how much stock do we have for",
+    "what is the stock of",
+    "what is stock of",
+    "stock level of",
+    "stock level for",
+    "stock of",
+    "stock for",
     "how much",
     "how many",
     "how much is left",
@@ -80,10 +113,24 @@ _STOCK_PHRASES = (
     "कितना बचा है",
     "कितनी बची",
     "कितना है",
+    "स्टॉक कितना है",
+    "कितना",
+    "कितनी",
 )
 _SEARCH_PHRASES = ("search for", "find", "show me", "dikhao", "दिखाओ", "खोजो")
 _ALL_PHRASES = tuple(
-    sorted(set(_LOW_STOCK_PHRASES + _LOCATION_PHRASES + _STOCK_PHRASES + _SEARCH_PHRASES), key=len, reverse=True)
+    sorted(
+        set(
+            _LOW_STOCK_PHRASES
+            + _OUT_OF_STOCK_PHRASES
+            + _LOCATION_PHRASES
+            + _STOCK_PHRASES
+            + _SEARCH_PHRASES
+            + ("बचा है", "बची है")
+        ),
+        key=len,
+        reverse=True,
+    )
 )
 
 
@@ -101,13 +148,23 @@ def understand_query(text: str) -> Query:
     normalized = normalize_text(text)
     if not normalized:
         return Query(original=original, normalized="", entity_query="", intent=Intent.UNKNOWN)
+    if any(normalize_text(phrase) in normalized for phrase in _OUT_OF_STOCK_PHRASES):
+        return Query(
+            original=original,
+            normalized=normalized,
+            entity_query="",
+            intent=Intent.OUT_OF_STOCK,
+        )
     if any(normalize_text(phrase) in normalized for phrase in _LOW_STOCK_PHRASES):
         return Query(original=original, normalized=normalized, entity_query="", intent=Intent.LOW_STOCK)
 
     intent = Intent.PRODUCT_SEARCH
     if any(normalize_text(phrase) in normalized for phrase in _LOCATION_PHRASES):
         intent = Intent.LOCATION
-    elif any(normalize_text(phrase) in normalized for phrase in _STOCK_PHRASES):
+    elif any(normalize_text(phrase) in normalized for phrase in _STOCK_PHRASES) or (
+        any(normalize_text(word) in normalized for word in ("बचा है", "बची है"))
+        and any(normalize_text(word) in normalized for word in ("कितना", "कितनी"))
+    ):
         intent = Intent.STOCK
     elif any(normalize_text(phrase) in normalized for phrase in _SEARCH_PHRASES):
         intent = Intent.PRODUCT_SEARCH

@@ -110,11 +110,14 @@ _ENTITY_NOISE = (
     "sell", "sold", "बेच", "बिक गया", "बिक गए", "बेचा",
     "kar do", "kardo", "karo", "do", "hai", "hain", "tha", "thi", "the",
     "maine", "main", "i", "we", "have", "has", "of", "to", "the",
+    "today", "yesterday", "aaj", "kal", "आज", "कल", "मैंने", "मैं", "हमने", "हम",
+    "खरीदे", "खरीदी", "खरीदा", "लिया", "लिए",
     "packet", "packets", "pkt", "pkts", "piece", "pieces", "pcs", "unit", "units",
     "bottle", "bottles", "kg", "kgs", "kilogram", "kilograms", "gram", "grams",
     "g", "litre", "litres", "liter", "liters", "ke", "ka", "ki", "ko", "ne",
-    "de diye", "de diya", "diya", "udhar diya", "का", "के", "की", "को", "ने",
-    "से", "में", "दे दिए", "दे दिया", "दिए", "दिया", "उधार दिया", "पैकेट",
+    "de diye", "de diya", "diya", "udhar diya", "gave me", "paid me",
+    "का", "के", "की", "को", "ने", "रुपये", "रुपए", "रुपया",
+    "से", "में", "दे दिए", "दे दिया", "दिए", "दिये", "दिया", "उधार दिया", "पैकेट",
     "पैकेट्स", "पीस",
 )
 _ADD_RECEIPT_CONTEXT = ("stock", "inventory", "maal", "सामान", "स्टॉक", "इन्वेंटरी")
@@ -176,17 +179,41 @@ def interpret_command(text: str) -> BusinessCommand | None:
     if any(phrase in normalized for phrase in ("correct transaction", "wrong entry", "galat entry", "सुधार")):
         return BusinessCommand(intent=CommandIntent.CORRECT_TRANSACTION)
 
-    if any(word in normalized for word in ("pending", "balance", "kitna udhar", "कितना उधार")):
-        customer = re.split(r"(?<!\w)(?:ka|ki|ke|का|की|के)(?!\w)", normalized, maxsplit=1)[0]
-        customer = _clean_entity(re.sub(r"\b(?:kitna udhar pending|kitna udhar|pending|balance)\b", " ", customer))
+    owe_match = re.match(
+        r"^(?:how much|what)\s+(?:does|do)\s+(.+?)\s+owes?(?:\s+(?:me|us))?$",
+        normalized,
+    )
+    if owe_match or any(word in normalized for word in ("pending", "balance", "kitna udhar", "कितना उधार")):
+        if owe_match:
+            customer = _clean_entity(owe_match.group(1))
+        else:
+            customer = re.split(r"(?<!\w)(?:ka|ki|ke|का|की|के)(?!\w)", normalized, maxsplit=1)[0]
+            customer = _clean_entity(
+                re.sub(r"\b(?:kitna udhar pending|kitna udhar|pending|balance)\b", " ", customer)
+            )
         return BusinessCommand(intent=CommandIntent.CUSTOMER_BALANCE_QUERY, customer_query=customer)
     if any(word in normalized for word in ("ledger", "transaction history", "hisab", "खाता")):
         customer = _clean_entity(re.sub(r"(?<!\w)(?:show|view|dikhao|का|की|के|ledger|hisab|खाता)(?!\w)", " ", normalized))
         return BusinessCommand(intent=CommandIntent.CUSTOMER_LEDGER_QUERY, customer_query=customer)
 
-    if any(phrase in normalized for phrase in ("de diye", "paid", "payment received", "jama kar", "दे दिए", "भुगतान")):
+    if any(
+        phrase in normalized
+        for phrase in (
+            "de diye", "de diya", "paid", "gave me", "payment received", "jama kar",
+            "jama kiye", "दे दिए", "दे दिया", "दिए", "दिये", "दिया", "भुगतान",
+        )
+    ):
         amount, residue = _number(normalized, _AMOUNT)
-        customer = _clean_entity(re.sub(r"(?<!\w)(?:ne|de diye|paid|payment received|jama kar|customer|ने|दे दिए|दे दिया|भुगतान)(?!\w)", " ", residue))
+        if amount is None:
+            amount, residue = _number(normalized, _QUANTITY)
+        customer = _clean_entity(
+            re.sub(
+                r"(?<!\w)(?:ne|de diye|de diya|paid|paid me|gave me|payment received|"
+                r"jama kar|jama kiye|customer|ने|दे दिए|दे दिया|दिए|दिये|दिया|भुगतान)(?!\w)",
+                " ",
+                residue,
+            )
+        )
         return BusinessCommand(
             intent=CommandIntent.RECORD_CUSTOMER_PAYMENT,
             customer_query=customer,

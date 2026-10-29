@@ -36,6 +36,7 @@ AI_INTENT_MAP = {
     "stock": Intent.STOCK,
     "location": Intent.LOCATION,
     "low_stock": Intent.LOW_STOCK,
+    "out_of_stock": Intent.OUT_OF_STOCK,
     "unknown": Intent.UNKNOWN,
 }
 
@@ -242,9 +243,10 @@ def extract_product_query(question: str) -> dict[str, str | None]:
                 "role": "system",
                 "content": (
                     "Interpret a small-business inventory question. Return only a JSON object with "
-                    "intent (one of stock, location, low_stock, unknown) and product_query "
+                    "intent (one of stock, location, low_stock, out_of_stock, unknown) and product_query "
                     "(the product name or null). Never answer with quantities, locations, SQL, or "
-                    "other facts. Use low_stock when the user asks for low stock."
+                    "other facts. Use low_stock for products at their configured minimum and "
+                    "out_of_stock for products with zero stock."
                 ),
             },
             {"role": "user", "content": question},

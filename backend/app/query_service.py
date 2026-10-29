@@ -43,7 +43,7 @@ def lookup_product(
             intent=interpreted_intent,
         )
     )
-    if query.intent == Intent.LOW_STOCK:
+    if query.intent in {Intent.LOW_STOCK, Intent.OUT_OF_STOCK}:
         totals = inventory_totals_subquery(business_id)
         products = session.execute(
             select(Product, func.coalesce(totals.c.quantity, 0).label("quantity"))
@@ -52,13 +52,22 @@ def lookup_product(
         ).all()
         low_stock = []
         for product, available in products:
-            if is_low_stock(available, product.minimum_stock):
+            if query.intent == Intent.OUT_OF_STOCK and available <= 0:
                 low_stock.append(f"{product.name} ({format_quantity_label(available, product.unit)})")
-        message = (
-            f"Low stock: {', '.join(low_stock)}."
-            if low_stock
-            else "No in-stock products are at or below their configured minimum stock level."
-        )
+            elif query.intent == Intent.LOW_STOCK and is_low_stock(available, product.minimum_stock):
+                low_stock.append(f"{product.name} ({format_quantity_label(available, product.unit)})")
+        if query.intent == Intent.OUT_OF_STOCK:
+            message = (
+                f"Out of stock: {', '.join(low_stock)}."
+                if low_stock
+                else "No active products are out of stock."
+            )
+        else:
+            message = (
+                f"Low stock: {', '.join(low_stock)}."
+                if low_stock
+                else "No in-stock products are at or below their configured minimum stock level."
+            )
         return LookupResult(
             intent=query.intent,
             original_query=text,
