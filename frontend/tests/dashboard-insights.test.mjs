@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 
 import { getDashboardInsightsState } from "../lib/dashboard-insights.mjs";
+
+const dashboardApp = await readFile(new URL("../components/dashboard-app.tsx", import.meta.url), "utf8");
 
 function dashboard(overrides = {}) {
   return {
@@ -110,4 +113,12 @@ test("reports products with zero stock even when their minimum stock is zero", (
 test("loading and failed dashboard requests are distinct from an empty business", () => {
   assert.equal(getDashboardInsightsState({ loading: true }).status, "loading");
   assert.equal(getDashboardInsightsState({ error: "request failed" }).status, "error");
+});
+
+test("business insights do not render mutation-completed status labels", () => {
+  assert.match(
+    dashboardApp,
+    /message\.answer\?\.action_result\s+&& message\.answer\.intent\s+&& actionStatusLabels\[message\.answer\.intent\]/,
+  );
+  assert.doesNotMatch(dashboardApp, /Business update completed\./);
 });

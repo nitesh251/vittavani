@@ -1,6 +1,6 @@
 # Vittavani QA Test Report
 
-**Updated:** 2026-10-27  
+**Updated:** 2026-10-29
 **Phase:** Focused and regression QA
 **Repository:** `nitesh251/vittavani`
 
@@ -191,3 +191,17 @@ This phase adds conversational chatbot scenario coverage and fixes deterministic
 | Real-user question and speech coverage | **Pending** | See `docs/CHATBOT_SCENARIOS.md` for required anonymized utterances, expected answers, isolated test data, optional speech device setup, and mutation authorization. |
 
 Commands: `cd backend && python -m pytest -q`; `cd frontend && npm test && npm run lint && npm run build`. Frontend dependencies were installed from the existing lockfile with `npm ci`; npm reported zero vulnerabilities.
+
+## Phase-ten results
+
+The month-to-date question exposed a deterministic routing gap: “How much sales did I make this month?” was treated as a product lookup. Month-to-date sales now use the business timezone and only aggregate the authorized business's recorded sales. Browser verification also exposed a misleading generic “Business update completed” label on read-only insights; the UI now shows that status only for recognized mutation intents.
+
+| Area | Result | Evidence and limits |
+| --- | --- | --- |
+| Month-to-date deterministic routing | **Passed** | Added support for “this month,” “month to date,” “monthly,” and common Hindi/Hinglish month phrases. Unimplemented “last month” is not treated as month-to-date. |
+| Month boundary and tenant scope | **Passed** | Unit regression covers Asia/Kolkata month-start boundary inclusion/exclusion, sums/counts, and exclusion of another business's sale. |
+| Dashboard browser question | **Passed** | In Normal Search, “How much sales did I make this month?” returned the synthetic business's recorded total: INR 300.00 across 2 sales for 2026-10-01 through 2026-10-30 (Asia/Kolkata). The read-only response no longer displays a mutation-completed label. This was an isolated SQLite-backed browser run, not Groq or PostgreSQL. |
+| Mutation state after the question | **Passed** | Read-only SQLite verification still showed 2 sales totaling 300, 4 receipt movements, and 2 sale movements; the month query made no business-data changes. |
+| Backend regression suite | **Passed** | `pytest -q`: 139 passed. One existing Starlette/httpx deprecation warning remains. |
+| Frontend tests, type check, and production build | **Passed** | `npm test`: 51 passed; `npm run lint` and `npm run build` passed. |
+| Live Groq, hosted Supabase, PostgreSQL, physical microphone | **Blocked / not run** | These remain unavailable or unconfigured in this runner; the local UI exercise used a development token and disposable synthetic SQLite database. |

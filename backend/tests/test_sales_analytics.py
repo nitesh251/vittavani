@@ -153,6 +153,9 @@ def test_sales_overview_and_question_answer_handle_no_recorded_sales(session: Se
     [
         ("How much were sales today?", "today"),
         ("How many units were sold today?", "today"),
+        ("How much sales did I make this month?", "month"),
+        ("Monthly sales", "month"),
+        ("Is mahine ki bikri kitni hui?", "month"),
         ("Sales trend this week", "trend"),
         ("How much were sales last week?", "last_week"),
         ("Which products sold the most last week?", "last_week_top_products"),
@@ -302,3 +305,59 @@ def test_last_week_questions_use_previous_local_calendar_week(session: Session):
     assert product_answer is not None
     assert "Top products by recorded quantity last week" in product_answer[0]
     assert "Tea: 2 packet" in product_answer[0]
+
+
+def test_month_to_date_sales_use_local_month_boundary_and_business_scope(session: Session):
+    business = Business(id=uuid4(), name="Shop", timezone="Asia/Kolkata")
+    other_business = Business(id=uuid4(), name="Other", timezone="Asia/Kolkata")
+    session.add_all([business, other_business])
+    session.flush()
+    location = Location(id=uuid4(), business_id=business.id, name="Shop")
+    other_location = Location(id=uuid4(), business_id=other_business.id, name="Other")
+    product = Product(id=uuid4(), business_id=business.id, name="Tea", unit="packet")
+    other_product = Product(id=uuid4(), business_id=other_business.id, name="Coffee", unit="packet")
+    session.add_all([location, other_location, product, other_product])
+    session.flush()
+
+    record_sale(
+        session, business.id, product.id, location.id,
+        datetime(2026, 9, 30, 18, 29, tzinfo=UTC),
+        total="999.00", quantity="99",
+    )
+    record_sale(
+        session, business.id, product.id, location.id,
+        datetime(2026, 9, 30, 18, 30, tzinfo=UTC),
+        total="10.00", quantity="2",
+    )
+    record_sale(
+        session, business.id, product.id, location.id,
+        datetime(2026, 10, 23, 18, 30, tzinfo=UTC),
+        total="15.00", quantity="3",
+    )
+    record_sale(
+        session, other_business.id, other_product.id, other_location.id,
+        datetime(2026, 10, 23, 19, 0, tzinfo=UTC),
+        total="999.00", quantity="99",
+    )
+    session.flush()
+
+    answer = answer_business_question(
+        session,
+        business.id,
+        business.timezone,
+        "How much sales did I make this month?",
+        now=datetime(2026, 10, 24, 0, 30, tzinfo=UTC),
+    )
+
+    assert answer is not None
+    assert answer[1] == {
+        "intent": "month",
+        "month": "2026-10",
+        "period_start": "2026-10-01",
+        "period_end": "2026-10-24",
+        "currency": "INR",
+        "total_amount": "25.00",
+        "sale_count": 2,
+    }
+    assert "month to date" in answer[0]
+    assert "INR 25.00 across 2 sale(s)" in answer[0]

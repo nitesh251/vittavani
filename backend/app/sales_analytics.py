@@ -323,6 +323,36 @@ def previous_calendar_week_sales(
     }
 
 
+def month_to_date_sales(
+    session: Session,
+    business_id: UUID,
+    timezone_name: str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    zone = _business_zone(timezone_name)
+    today = (now or datetime.now(UTC)).astimezone(zone).date()
+    start_day = today.replace(day=1)
+    start_at = datetime.combine(start_day, time.min, tzinfo=zone).astimezone(UTC)
+    end_at = datetime.combine(today + timedelta(days=1), time.min, tzinfo=zone).astimezone(UTC)
+    total_amount, sale_count = session.execute(
+        select(func.coalesce(func.sum(Sale.total_amount), _ZERO), func.count(Sale.id)).where(
+            Sale.business_id == business_id,
+            Sale.created_at >= start_at,
+            Sale.created_at < end_at,
+        )
+    ).one()
+    business = session.get(Business, business_id)
+    return {
+        "month": start_day.strftime("%Y-%m"),
+        "period_start": start_day.isoformat(),
+        "period_end": today.isoformat(),
+        "currency": business.currency if business else "INR",
+        "total_amount": str((total_amount or _ZERO).quantize(_MONEY, rounding=ROUND_HALF_UP)),
+        "sale_count": sale_count,
+    }
+
+
 def classify_business_question(question: str) -> str | None:
     text = " ".join(question.casefold().split())
     question_prefixes = (
@@ -389,6 +419,20 @@ def classify_business_question(question: str) -> str | None:
     has_sales = any(word in text for word in ("sales", "sale", "revenue", "bikri", "बिक्री")) or (
         is_question and any(word in text for word in ("sold ", "sell "))
     )
+    is_month_to_date = any(
+        phrase in text
+        for phrase in (
+            "this month",
+            "month to date",
+            "month-to-date",
+            "monthly",
+            "is mahine",
+            "iss mahine",
+            "इस महीने",
+        )
+    )
+    if has_sales and is_month_to_date:
+        return "month"
     has_period = any(word in text for word in ("today", "aaj", "आज", "this week", "last week", "week", "recent"))
     if has_sales and has_period:
         return "trend" if any(word in text for word in ("week", "recent", "trend", "compare")) else "today"
@@ -430,6 +474,14 @@ def answer_business_question(
                 f'{report["currency"]} '
                 f'{report["total_amount"]} across {report["sale_count"]} sale(s).'
             )
+        return message, {"intent": intent, **report}
+    if intent == "month":
+        report = month_to_date_sales(session, business_id, timezone_name, now=now)
+        message = (
+            f'Recorded sales month to date ({report["period_start"]} to {report["period_end"]}, '
+            f'{timezone_name}) totaled {report["currency"]} {report["total_amount"]} '
+            f'across {report["sale_count"]} sale(s).'
+        )
         return message, {"intent": intent, **report}
     overview = sales_overview(session, business_id, timezone_name, now=now)
     currency = overview["currency"]

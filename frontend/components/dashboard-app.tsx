@@ -2299,9 +2299,11 @@ export default function Home() {
                     {message.answer?.candidates.length ? (
                       <p className="result-detail">Options: {message.answer.candidates.join(", ")}</p>
                     ) : null}
-                    {message.answer?.action_result && message.answer.intent && (
+                    {message.answer?.action_result
+                      && message.answer.intent
+                      && actionStatusLabels[message.answer.intent] && (
                       <p className="chat-action-status">
-                        {actionStatusLabels[message.answer.intent] ?? "Business update completed."}
+                        {actionStatusLabels[message.answer.intent]}
                         {message.answer.action_result.sale_id != null
                           ? ` · Ref ${String(message.answer.action_result.sale_id)}`
                           : null}
