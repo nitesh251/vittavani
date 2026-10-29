@@ -156,3 +156,18 @@ On a supported Android browser, test Hindi/Hinglish and English input with micro
 ## CI status
 
 GitHub Actions run `40465394011` was still in progress at the last check, on the pre-phase-two commit `2d201a9`. No completed CI result is available for this phase’s test-only commits and report.
+
+## Phase-eight results
+
+This phase adds conversational chatbot scenario coverage and fixes deterministic query/action parsing for location questions, zero-stock reports, Hindi receipt/payment wording, and customer balance questions. The scenario catalog is in `docs/CHATBOT_SCENARIOS.md`.
+
+| Area | Result | Evidence and limits |
+| --- | --- | --- |
+| Backend regression suite | **Passed** | 134 pytest tests passed after scenario changes. Coverage includes command extraction in English/Hindi/Hinglish, separate low/out-of-stock behavior, persisted receipt/sale/payment/ledger flows, clarification, idempotency, rollback, and no-mutation cases. One existing Starlette/httpx deprecation warning remains. |
+| Frontend regression tests | **Passed** | 45 Node tests passed. |
+| Frontend type check and production build | **Passed** | `npm run lint` and `npm run build` passed from `frontend/`; all nine routes generated. |
+| AI out-of-stock routing | **Passed with mocked interpretation** | The AI-mode API route returns out-of-stock products from the isolated database; no provider call was made. |
+| Live Groq and hosted Supabase | **Blocked** | `AI_PROVIDER`, `AI_MODEL`, `GROQ_API_KEY`, and hosted Supabase configuration are not available. No live credentials were requested or used. |
+| Real-user question and speech coverage | **Pending** | See `docs/CHATBOT_SCENARIOS.md` for required anonymized utterances, expected answers, isolated test data, optional speech device setup, and mutation authorization. |
+
+Commands: `cd backend && python -m pytest -q`; `cd frontend && npm test && npm run lint && npm run build`. Frontend dependencies were installed from the existing lockfile with `npm ci`; npm reported zero vulnerabilities.
