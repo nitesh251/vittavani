@@ -1,0 +1,124 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
+
+import { getDashboardInsightsState } from "../lib/dashboard-insights.mjs";
+
+const dashboardApp = await readFile(new URL("../components/dashboard-app.tsx", import.meta.url), "utf8");
+
+function dashboard(overrides = {}) {
+  return {
+    product_count: 0,
+    out_of_stock_count: 0,
+    stock_by_unit: [],
+    low_stock_products: [],
+    recent_stock_activity: [],
+    sales_overview: {
+      currency: "INR",
+      current_period: { sale_count: 0, total_amount: "0.00" },
+      previous_period: { sale_count: 0, total_amount: "0.00" },
+      top_products: [],
+    },
+    ...overrides,
+  };
+}
+
+test("inventory without sales still produces a persisted-stock insight", () => {
+  const state = getDashboardInsightsState({
+    dashboard: dashboard({
+      product_count: 2,
+      stock_by_unit: [{ unit: "packet", display_quantity: "23 packets" }],
+    }),
+  });
+
+  assert.equal(state.status, "ready");
+  assert.match(state.insights[0].detail, /2 products are tracked/);
+  assert.match(state.insights[0].detail, /23 packets/);
+});
+
+test("sales and recent movements produce concise, data-backed insights", () => {
+  const state = getDashboardInsightsState({
+    dashboard: dashboard({
+      sales_overview: {
+        currency: "INR",
+        current_period: { sale_count: 2, total_amount: "500.00" },
+        previous_period: { sale_count: 1, total_amount: "250.00" },
+        top_products: [{ name: "Keyboard", quantity: "3", unit: "pieces" }],
+      },
+      recent_stock_activity: [{
+        movement_type: "purchase_receipt",
+        product_name: "Mouse",
+        display_quantity: "4 pieces",
+        created_at: "2026-10-24T08:00:00Z",
+      }],
+    }),
+  });
+
+  assert.equal(state.status, "ready");
+  assert.equal(state.insights.length, 3);
+  assert.match(state.insights[0].detail, /₹500\.00/);
+  assert.match(state.insights[1].detail, /3 pieces sold/);
+  assert.match(state.insights[2].detail, /Received 4 pieces of Mouse on/);
+});
+
+test("sale movement insights use a concise factual sentence", () => {
+  const state = getDashboardInsightsState({
+    dashboard: dashboard({
+      recent_stock_activity: [{
+        movement_type: "sale",
+        product_name: "Keyboard",
+        display_quantity: "2 pieces",
+        created_at: "2026-10-24T08:00:00Z",
+      }],
+    }),
+  });
+
+  assert.equal(state.insights[0].detail, "Sold 2 pieces of Keyboard on 24 Oct 2026.");
+});
+
+test("insufficient sales periods are not presented as a comparison", () => {
+  const state = getDashboardInsightsState({
+    dashboard: dashboard({
+      sales_overview: {
+        currency: "INR",
+        current_period: { sale_count: 1, total_amount: "90.00" },
+        previous_period: { sale_count: 0, total_amount: "0.00" },
+        top_products: [],
+      },
+    }),
+  });
+
+  assert.equal(state.status, "ready");
+  assert.equal(state.insights[0].title, "Sales recorded this week");
+  assert.doesNotMatch(state.insights[0].detail, /compared with/);
+});
+
+test("no records suggests a useful first action instead of fabricating insight", () => {
+  const state = getDashboardInsightsState({ dashboard: dashboard() });
+
+  assert.equal(state.status, "empty");
+  assert.deepEqual(state.insights, []);
+});
+
+test("reports products with zero stock even when their minimum stock is zero", () => {
+  const state = getDashboardInsightsState({
+    dashboard: dashboard({ product_count: 1, out_of_stock_count: 1 }),
+  });
+
+  assert.equal(state.status, "ready");
+  assert.equal(state.insights[0].title, "Products out of stock");
+  assert.match(state.insights[0].detail, /1 tracked product has no stock on hand/);
+});
+
+test("loading and failed dashboard requests are distinct from an empty business", () => {
+  assert.equal(getDashboardInsightsState({ loading: true }).status, "loading");
+  assert.equal(getDashboardInsightsState({ error: "request failed" }).status, "error");
+});
+
+test("business insights do not render mutation-completed status labels", () => {
+  assert.match(
+    dashboardApp,
+    /message\.answer\?\.action_result\s+&& message\.answer\.intent\s+&& actionStatusLabels\[message\.answer\.intent\]/,
+  );
+  assert.doesNotMatch(dashboardApp, /Business update completed\./);
+});
