@@ -157,6 +157,26 @@ On a supported Android browser, test Hindi/Hinglish and English input with micro
 
 GitHub Actions run `40465394011` was still in progress at the last check, on the pre-phase-two commit `2d201a9`. No completed CI result is available for this phase’s test-only commits and report.
 
+## Phase-nine results
+
+This phase inspected the requested live Groq, database, browser, and voice paths. The checkout did not contain the user's Windows `.env` or `frontend/.env.local`, the process had no injected AI/Supabase/database variables, and Docker Compose reported no running database service. To protect existing data, no database was opened for writes and no named E2E business or hosted test user was created.
+
+| Area | Result | Evidence and limits |
+| --- | --- | --- |
+| Effective Groq configuration | **Blocked / not configured in this runner** | The backend reads the repository-root `.env` (`backend/app/config.py`), not `backend/.env`. `AI_PROVIDER`, `AI_MODEL`, and `GROQ_API_KEY` were unset; the Groq adapter reported unconfigured. The intended `openai/gpt-oss-120b` model could not be confirmed here. No secret values were read or printed. |
+| Live Groq completion | **Not run** | The existing adapter posts JSON to Groq's OpenAI-compatible chat-completions endpoint with an `Authorization: Bearer` header, configured model, and a 1–30 second bounded timeout. No request was sent because this runner has no API key; consequently there is no HTTP status or live-response result to report. |
+| Ask Vittavani provider path | **Verified by code and mocks** | AI-mode inventory questions call the structured product-query extraction path; incomplete actions can call structured command extraction. Deterministic complete actions do not need an LLM. This phase fixed their response metadata so they no longer claim a provider/model when no provider request was made. Tests cover both the invoked and deterministic paths; these are mock/local tests, not live Groq evidence. |
+| Synthetic business and PostgreSQL state | **Not created / not run** | `DATABASE_URL` and `SUPABASE_URL` were absent and no PostgreSQL container was running. The database identity and isolation could not be verified, so no database writes were attempted. Existing backend tests use isolated SQLite test data; those fixtures are not a persistent E2E business or Supabase test identity. |
+| Backend regression tests | **Passed** | The AI provider and chatbot query-pipeline tests passed (110 tests before this phase's additional metadata regression; the two focused metadata tests also passed). Provider tests use mocks for HTTP errors, timeouts, empty/malformed responses, and sanitized failures. A Starlette/httpx deprecation warning remains. |
+| Automated voice recognition tests | **Passed with browser API fakes** | Five Node tests verify WebKit API selection, language settings, transcript delivery, unsupported-browser fallback, denied permission, empty recognition, and start failure. These tests exercise callbacks with a fake Web Speech API; they do not represent microphone input. |
+| Windows Chrome microphone and spoken response | **Not run** | This runner is Linux, with no Windows Chrome microphone session. The UI uses `SpeechRecognition` or `webkitSpeechRecognition`; optional spoken answers use `window.speechSynthesis`. No real speech transcript or audio playback is claimed. |
+
+### Safe live-test prerequisites
+
+For this backend configuration, place `AI_PROVIDER=groq`, `AI_MODEL`, and `GROQ_API_KEY` in the repository-root `.env` (or supply them through an approved secure runtime secret injection). A `backend/.env` alone is not loaded by the current settings class. Hosted Auth additionally needs `SUPABASE_URL` in the backend and matching `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` in the frontend. Never expose the Groq key through a `NEXT_PUBLIC_*` variable or chat.
+
+Before any live database mutation, provide an isolated staging PostgreSQL URL and verify it is not production. Use a dedicated test Supabase user/workspace, seed known synthetic expected values, and authorize each mutation. For Chrome voice checks, test the supported browser with microphone permission granted and denied separately, and distinguish the recognized transcript from the expected synthetic phrase. No live test in this phase used credentials or modified data.
+
 ## Phase-eight results
 
 This phase adds conversational chatbot scenario coverage and fixes deterministic query/action parsing for location questions, zero-stock reports, Hindi receipt/payment wording, and customer balance questions. The scenario catalog is in `docs/CHATBOT_SCENARIOS.md`.
