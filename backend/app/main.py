@@ -754,6 +754,7 @@ def ask(
         with _transaction(session):
             session.delete(conversation)
 
+    provider_used = False
     if pending_command is None and classify_business_question(body.query) is not None:
         business = session.get(Business, business_id)
         if business is not None:
@@ -775,6 +776,7 @@ def ask(
                             body.query,
                             verified_context=_verified_advice_context(action_result),
                         )
+                        provider_used = True
                         message += f"\n\nSuggestions: {suggestions}"
                     except AIProviderError:
                         message += "\n\nAI suggestions are temporarily unavailable; the recorded facts above are unchanged."
@@ -786,6 +788,8 @@ def ask(
                     clarification_required=False,
                     message=message,
                     mode=body.mode,
+                    provider=settings.ai_provider if provider_used else None,
+                    model=settings.ai_model if provider_used else None,
                     action_result=action_result,
                 )
     command = pending_command or interpret_command(body.query)
@@ -821,6 +825,7 @@ def ask(
                 raise HTTPException(status_code=503, detail="AI Assistant is not configured; use Normal Search or add the missing details.")
             try:
                 command = extract_business_command(body.query)
+                provider_used = True
             except AIProviderError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -860,8 +865,8 @@ def ask(
                         clarification_required=bool(result.get("clarification_required", False)),
                         message=str(result["message"]),
                         mode=body.mode,
-                        provider=settings.ai_provider if body.mode == "ai" else None,
-                        model=settings.ai_model if body.mode == "ai" else None,
+                        provider=settings.ai_provider if provider_used else None,
+                        model=settings.ai_model if provider_used else None,
                         action_result=result.get("action_result"),
                     )
                     if (

@@ -5,6 +5,12 @@ import { compareDecimalStrings, formatQuantityWithUnit } from "../lib/quantity.m
 import { contextualizeFollowUp, getOrCreateConversationId } from "../lib/conversation.mjs";
 import { getDashboardInsightsState } from "../lib/dashboard-insights.mjs";
 import {
+  getSpeechRecognitionConstructor,
+  startSpeechRecognition,
+  type SpeechRecognitionLike,
+  type SpeechRecognitionWindow,
+} from "../lib/speech-recognition.mjs";
+import {
   getDisplayName,
   getProfileImageUrl,
   getProfileInitials,
@@ -155,27 +161,6 @@ type SupplierPurchaseFormLine = {
   quantity: string;
   unit: string;
   unit_price: string;
-};
-
-type SpeechRecognitionAlternative = { transcript: string };
-type SpeechRecognitionResult = ArrayLike<SpeechRecognitionAlternative> & { isFinal: boolean };
-type SpeechRecognitionEvent = { resultIndex: number; results: ArrayLike<SpeechRecognitionResult> };
-type SpeechRecognitionErrorEvent = { error: string };
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-  start(): void;
-  stop(): void;
-  abort(): void;
-};
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-type SpeechWindow = Window & {
-  SpeechRecognition?: SpeechRecognitionConstructor;
-  webkitSpeechRecognition?: SpeechRecognitionConstructor;
 };
 
 const examples = [
@@ -1204,8 +1189,8 @@ export default function Home() {
 
   function startListening() {
     setVoiceError("");
-    const browserWindow = window as SpeechWindow;
-    const Recognition = browserWindow.SpeechRecognition ?? browserWindow.webkitSpeechRecognition;
+    const browserWindow = window as Window & SpeechRecognitionWindow;
+    const Recognition = getSpeechRecognitionConstructor(browserWindow);
     if (!Recognition) {
       setVoiceError("Voice input is not supported in this browser. You can still type your question.");
       return;
@@ -1217,50 +1202,30 @@ export default function Home() {
 
     window.speechSynthesis?.cancel();
     setSpeaking(false);
-    const recognition = new Recognition();
-    let receivedTranscript = false;
-    let recognitionFailed = false;
-    recognition.lang = speechLanguage;
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.onresult = (event) => {
-      const transcript = Array.from({ length: event.results.length }, (_, index) =>
-        event.results[index][0].transcript,
-      ).join(" ").trim();
-      if (transcript) {
-        receivedTranscript = true;
-        setQuery(transcript);
-      }
-    };
-    recognition.onerror = (event) => {
-      recognitionFailed = true;
-      const messages: Record<string, string> = {
-        "not-allowed": "Microphone permission was denied. Allow microphone access or type your question.",
-        "service-not-allowed": "Microphone access is blocked by your browser or device. You can type instead.",
-        "audio-capture": "No microphone was found. Connect a microphone or type your question.",
-        "no-speech": "We didn’t hear anything. Try again or type your question.",
-        network: "Voice recognition needs an internet connection. You can type your question.",
-      };
-      setVoiceError(messages[event.error] ?? "Voice input stopped unexpectedly. Please try again or type your question.");
-      setListening(false);
-    };
-    recognition.onend = () => {
-      setListening(false);
-      recognitionRef.current = null;
-      if (!receivedTranscript && !recognitionFailed) {
-        setVoiceError("No words were recognized. Try again or type your question.");
-      }
-      window.setTimeout(() => askInputRef.current?.focus(), 0);
-    };
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-      setListening(true);
-    } catch {
-      recognitionRef.current = null;
-      setListening(false);
-      setVoiceError("Could not start the microphone. Please try again or type your question.");
-    }
+    startSpeechRecognition(browserWindow, speechLanguage, {
+      onTranscript: setQuery,
+      onError: (message) => {
+        setVoiceError(message);
+        setListening(false);
+      },
+      onEnd: ({ receivedTranscript, recognitionFailed }) => {
+        setListening(false);
+        recognitionRef.current = null;
+        if (!receivedTranscript && !recognitionFailed) {
+          setVoiceError("No words were recognized. Try again or type your question.");
+        }
+        window.setTimeout(() => askInputRef.current?.focus(), 0);
+      },
+      onStarted: (recognition) => {
+        recognitionRef.current = recognition;
+        setListening(true);
+      },
+      onStartFailure: () => {
+        recognitionRef.current = null;
+        setListening(false);
+        setVoiceError("Could not start the microphone. Please try again or type your question.");
+      },
+    });
   }
 
   function changeSpeakAnswers(enabled: boolean) {

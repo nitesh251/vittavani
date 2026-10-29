@@ -886,6 +886,8 @@ def test_ai_mode_routes_action_like_unparsed_commands_to_structured_action(clien
 
     monkeypatch.setattr("app.main.interpret_command", lambda _query: None)
     monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+    monkeypatch.setattr("app.main.settings.ai_provider", "groq")
+    monkeypatch.setattr("app.main.settings.ai_model", "test-model")
     monkeypatch.setattr(
         "app.main.extract_business_command",
         lambda _query: BusinessCommand(
@@ -904,11 +906,36 @@ def test_ai_mode_routes_action_like_unparsed_commands_to_structured_action(clien
 
     assert response.status_code == 200
     assert response.json()["intent"] == "receive_stock"
+    assert response.json()["provider"] == "groq"
+    assert response.json()["model"] == "test-model"
     assert session.scalar(select(InventoryBalance.quantity).where(
         InventoryBalance.business_id == BUSINESS_ID,
         InventoryBalance.product_id == UUID("00000000-0000-0000-0000-000000000020"),
         InventoryBalance.location_id == UUID("00000000-0000-0000-0000-000000000012"),
     )) == Decimal("21.000")
+
+
+def test_ai_mode_does_not_claim_provider_for_deterministic_command(client, monkeypatch):
+    monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
+    monkeypatch.setattr("app.main.settings.ai_provider", "groq")
+    monkeypatch.setattr("app.main.settings.ai_model", "test-model")
+    monkeypatch.setattr(
+        "app.main.extract_business_command",
+        lambda _query: (_ for _ in ()).throw(AssertionError("provider should not be called")),
+    )
+    response = client.post(
+        "/api/v1/ask",
+        headers={"X-Dev-Token": "local-test-token", "Idempotency-Key": "deterministic-ai-receipt"},
+        json={
+            "query": "Add three packets of Amul Butter to stock at Shelf 2",
+            "mode": "ai",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "receive_stock"
+    assert response.json()["provider"] is None
+    assert response.json()["model"] is None
 
 
 def test_unknown_stock_receipt_suggests_product_creation_without_mutation(client, session):
