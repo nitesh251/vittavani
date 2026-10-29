@@ -320,10 +320,13 @@ def test_out_of_stock_product_is_reported_separately_from_low_stock(session):
     session.add(rice)
     session.commit()
 
-    result = lookup_product(session, BUSINESS_ID, "Show low stock items.")
+    low_stock_result = lookup_product(session, BUSINESS_ID, "Show low stock items.")
+    out_of_stock_result = lookup_product(session, BUSINESS_ID, "Which items are out of stock?")
 
-    assert result.candidates == ()
-    assert "Rice" not in result.message
+    assert low_stock_result.candidates == ()
+    assert "Rice" not in low_stock_result.message
+    assert out_of_stock_result.candidates == ("Rice (0 bags)",)
+    assert "Rice (0 bags)" in out_of_stock_result.message
 
 
 def test_low_stock_rule_ignores_zero_threshold_and_out_of_stock():
@@ -456,6 +459,14 @@ def test_ai_mode_handles_location_and_low_stock_intents(client, session, monkeyp
             quantity=Decimal("2"),
         )
     )
+    bread = Product(
+        id=UUID("00000000-0000-0000-0000-000000000075"),
+        business_id=BUSINESS_ID,
+        name="Bread",
+        unit="packet",
+        minimum_stock=Decimal("3"),
+    )
+    session.add(bread)
     session.commit()
     monkeypatch.setattr("app.main.ai_is_configured", lambda: True)
     monkeypatch.setattr("app.main.settings.ai_provider", "groq")
@@ -464,6 +475,7 @@ def test_ai_mode_handles_location_and_low_stock_intents(client, session, monkeyp
         [
             {"intent": "location", "product_query": "Amul Butter"},
             {"intent": "low_stock", "product_query": None},
+            {"intent": "out_of_stock", "product_query": None},
         ]
     )
     monkeypatch.setattr("app.main.extract_product_query", lambda question: next(interpretations))
@@ -479,12 +491,20 @@ def test_ai_mode_handles_location_and_low_stock_intents(client, session, monkeyp
         headers=headers,
         json={"query": "Which products are nearly out?", "mode": "ai"},
     )
+    out_of_stock_response = client.post(
+        "/api/v1/ask",
+        headers=headers,
+        json={"query": "Which items are out of stock?", "mode": "ai"},
+    )
 
     assert location_response.status_code == 200
     assert location_response.json()["intent"] == "product_location"
     assert "Storeroom > Rack B > Shelf 2" in location_response.json()["message"]
     assert low_stock_response.status_code == 200
     assert "Milk (2 packets)" in low_stock_response.json()["message"]
+    assert out_of_stock_response.status_code == 200
+    assert out_of_stock_response.json()["intent"] == "out_of_stock_report"
+    assert out_of_stock_response.json()["candidates"] == ["Bread (0 packets)"]
 
 
 def test_ai_provider_failure_returns_a_sanitized_upstream_error(client, monkeypatch):
